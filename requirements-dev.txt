@@ -1,0 +1,9 @@
+# Development dependencies
+grpcio-tools>=1.48.0
+pytest>=7.0.0
+pytest-cov>=3.0.0
+pylint>=2.15.0
+mypy>=1.0.0
+types-protobuf>=4.24.0
+build>=0.10.0
+twine>=4.0.0

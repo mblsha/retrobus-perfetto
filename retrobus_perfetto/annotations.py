@@ -5,11 +5,11 @@ from typing import Dict, Any
 
 class DebugAnnotationBuilder:
     """Builder for Perfetto debug annotations with type-safe value handling."""
-    
+
     def __init__(self, annotation):
         """
         Initialize with a protobuf DebugAnnotation object.
-        
+
         Args:
             annotation: The protobuf DebugAnnotation to populate
         """
@@ -69,11 +69,11 @@ class DebugAnnotationBuilder:
 
 class TrackEventWrapper:
     """Wrapper for TrackEvent with convenient annotation methods."""
-    
+
     def __init__(self, event):
         """
         Initialize with a protobuf TrackEvent object.
-        
+
         Args:
             event: The protobuf TrackEvent to wrap
         """
@@ -88,10 +88,10 @@ class TrackEventWrapper:
     def annotation(self, name: str) -> DebugAnnotationBuilder:
         """
         Create a new debug annotation with the given name.
-        
+
         Args:
             name: The name of the annotation group
-            
+
         Returns:
             DebugAnnotationBuilder for adding values
         """
@@ -102,14 +102,14 @@ class TrackEventWrapper:
     def add_annotations(self, data: Dict[str, Any]) -> None:
         """
         Add multiple annotations from a dictionary.
-        
+
         Args:
             data: Dictionary of key-value pairs to add as annotations
         """
         for key, value in data.items():
             ann = self.event.debug_annotations.add()
             ann.name = key
-            
+
             if isinstance(value, bool):
                 ann.bool_value = value
             elif isinstance(value, int):

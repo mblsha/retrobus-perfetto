@@ -1,6 +1,5 @@
 """Setup script for retrobus-perfetto package."""
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,18 +11,18 @@ from setuptools.command.develop import develop
 
 class BuildProtoCommand:
     """Mixin for building protobuf files."""
-    
+
     def run_protoc(self):
         """Compile .proto files to Python modules."""
         proto_dir = Path("retrobus_perfetto/proto")
         proto_file = proto_dir / "perfetto.proto"
-        
+
         if not proto_file.exists():
             print(f"Warning: {proto_file} not found, skipping protobuf compilation")
             return
-            
+
         print(f"Compiling {proto_file}...")
-        
+
         try:
             # Run protoc
             result = subprocess.run([
@@ -31,8 +30,8 @@ class BuildProtoCommand:
                 f"--proto_path={proto_dir}",
                 f"--python_out={proto_dir}",
                 str(proto_file)
-            ], capture_output=True, text=True)
-            
+            ], capture_output=True, text=True, check=False)
+
             if result.returncode != 0:
                 print(f"protoc failed: {result.stderr}")
                 # Try alternative protoc command
@@ -41,15 +40,15 @@ class BuildProtoCommand:
                     f"--proto_path={proto_dir}",
                     f"--python_out={proto_dir}",
                     str(proto_file)
-                ], capture_output=True, text=True)
-                
+                ], capture_output=True, text=True, check=False)
+
                 if result.returncode != 0:
                     print(f"Alternative protoc also failed: {result.stderr}")
                     print("Please install protobuf compiler (protoc) or grpcio-tools")
                     sys.exit(1)
-                    
+
             print("Protobuf compilation successful")
-            
+
         except FileNotFoundError:
             print("protoc not found. Please install protobuf compiler or grpcio-tools")
             sys.exit(1)
@@ -57,7 +56,7 @@ class BuildProtoCommand:
 
 class BuildPyCommand(build_py, BuildProtoCommand):
     """Custom build command that compiles protos."""
-    
+
     def run(self):
         self.run_protoc()
         super().run()
@@ -65,7 +64,7 @@ class BuildPyCommand(build_py, BuildProtoCommand):
 
 class DevelopCommand(develop, BuildProtoCommand):
     """Custom develop command that compiles protos."""
-    
+
     def run(self):
         self.run_protoc()
         super().run()
@@ -90,7 +89,7 @@ setup(
     url="https://github.com/yourusername/retrobus-perfetto",
     packages=find_packages(),
     package_data={
-        "retrobus_perfetto": ["proto/*.proto"],
+        "retrobus_perfetto": ["proto/*.proto", "py.typed", "proto/*.pyi"],
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
