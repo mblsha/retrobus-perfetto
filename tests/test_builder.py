@@ -82,7 +82,7 @@ def test_instant_events(builder):
     
     # Test annotation builder
     with event.annotation("test_group") as ann:
-        ann.int("value", 123)
+        ann.integer("value", 123)
         ann.string("name", "test")
         ann.bool("flag", False)
 

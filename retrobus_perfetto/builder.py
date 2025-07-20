@@ -11,6 +11,21 @@ except ImportError:
     perfetto = None
 
 
+# Type stubs for pylint when perfetto is not available
+if not perfetto:
+    class _MockPerfetto:
+        """Mock perfetto module for type checking."""
+        class Trace:
+            """Mock Trace class."""
+        
+        class TrackEvent:
+            """Mock TrackEvent class."""
+            TYPE_SLICE_BEGIN = 1
+            TYPE_SLICE_END = 2
+            TYPE_INSTANT = 3
+            TYPE_COUNTER = 4
+
+
 class PerfettoTraceBuilder:
     """
     Builder for creating Perfetto traces with a clean API.

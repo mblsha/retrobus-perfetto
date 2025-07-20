@@ -94,8 +94,8 @@ event = builder.begin_slice(cpu_thread, "function_call", timestamp=1000)
 # Add grouped annotations
 with event.annotation("registers") as ann:
     ann.pointer("PC", 0x1234)
-    ann.int("A", 42)
-    ann.int("B", 0)
+    ann.integer("A", 42)
+    ann.integer("B", 0)
     ann.pointer("SP", 0x7FFE)
 
 with event.annotation("flags") as ann:

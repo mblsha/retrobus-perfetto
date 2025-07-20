@@ -38,9 +38,9 @@ def main():
     timestamp += 100
     nested = builder.begin_slice(cpu_thread, "draw_char", timestamp)
     with nested.annotation("parameters") as ann:
-        ann.int("char", 65)  # 'A'
-        ann.int("x", 10)
-        ann.int("y", 5)
+        ann.integer("char", 65)  # 'A'
+        ann.integer("x", 10)
+        ann.integer("y", 5)
     
     # I/O operation within function
     timestamp += 50

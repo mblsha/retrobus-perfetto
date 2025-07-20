@@ -1,0 +1,39 @@
+[MESSAGES CONTROL]
+# Disable specific messages
+disable=
+    # Ignore all issues in generated files
+    locally-disabled,
+    file-ignored,
+    suppressed-message,
+    # Common issues to ignore
+    too-few-public-methods,
+    too-many-instance-attributes,
+    too-many-arguments,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    line-too-long,
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    invalid-name,
+    # Ignore import issues for generated protobuf
+    no-member,
+    # Allow TODO comments
+    fixme
+
+[MASTER]
+# Ignore generated protobuf files
+ignore-patterns=.*_pb2\.py$
+
+[FORMAT]
+# Maximum number of characters on a single line.
+max-line-length=120
+
+[BASIC]
+# Good variable names which should always be accepted
+good-names=i,j,k,ex,Run,_,id
+
+[TYPECHECK]
+# List of module names for which member attributes should not be checked
+ignored-modules=retrobus_perfetto.proto.perfetto_pb2

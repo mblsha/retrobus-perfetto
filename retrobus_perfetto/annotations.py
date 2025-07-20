@@ -1,6 +1,6 @@
 """Helper classes for building Perfetto debug annotations."""
 
-from typing import Union, Dict, Any, Optional
+from typing import Dict, Any
 
 
 class DebugAnnotationBuilder:
@@ -42,7 +42,7 @@ class DebugAnnotationBuilder:
         entry = self._create_entry(name)
         entry.bool_value = value
 
-    def int(self, name: str, value: int) -> None:
+    def integer(self, name: str, value: int) -> None:
         """Add an integer value."""
         entry = self._create_entry(name)
         entry.int_value = value
@@ -57,7 +57,7 @@ class DebugAnnotationBuilder:
         if isinstance(value, bool):
             self.bool(name, value)
         elif isinstance(value, int):
-            self.int(name, value)
+            self.integer(name, value)
         elif isinstance(value, float):
             self.double(name, value)
         elif isinstance(value, str):
