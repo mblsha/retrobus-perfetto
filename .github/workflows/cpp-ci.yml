@@ -1,0 +1,24 @@
+name: C++ CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'proto/**'
+      - '.github/workflows/cpp-ci.yml'
+
+jobs:
+  placeholder:
+    name: C++ CI Placeholder
+    runs-on: ubuntu-latest
+    steps:
+    - name: Placeholder
+      run: |
+        echo "C++ CI workflow will be implemented when C++ code is added"
+        echo "This workflow will include:"
+        echo "  - CMake build"
+        echo "  - Unit tests"
+        echo "  - Static analysis"
+        echo "  - Example compilation"

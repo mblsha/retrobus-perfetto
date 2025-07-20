@@ -1,9 +1,17 @@
-name: CI
+name: Python CI
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
+    paths:
+      - 'py/**'
+      - 'proto/**'
+      - '.github/workflows/python-ci.yml'
+
+defaults:
+  run:
+    working-directory: py
 
 jobs:
   pylint:
@@ -22,7 +30,7 @@ jobs:
         pip install -e ".[dev]"
     - name: Run Pylint
       run: |
-        pylint $(git ls-files '*.py')
+        cd .. && pylint $(git ls-files 'py/*.py')
 
   mypy:
     name: Type Check (MyPy)
@@ -69,7 +77,7 @@ jobs:
       if: matrix.python-version == '3.11'
       uses: codecov/codecov-action@v3
       with:
-        file: ./coverage.xml
+        file: ./py/coverage.xml
         fail_ci_if_error: true
 
   example-test:
@@ -98,7 +106,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: example-trace
-        path: trace.perfetto-trace
+        path: py/trace.perfetto-trace
 
   build:
     name: Build Package
@@ -124,7 +132,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: dist
-        path: dist/
+        path: py/dist/
 
   proto-compilation:
     name: Protobuf Compilation Test
@@ -141,14 +149,15 @@ jobs:
         pip install grpcio-tools
     - name: Compile protobuf manually
       run: |
+        cd py
         python -m grpc_tools.protoc \
-          --proto_path=retrobus_perfetto/proto \
+          --proto_path=../proto \
           --python_out=retrobus_perfetto/proto \
-          retrobus_perfetto/proto/perfetto.proto
+          ../proto/perfetto.proto
     - name: Verify generated file
       run: |
         test -f retrobus_perfetto/proto/perfetto_pb2.py
-        python -c "import retrobus_perfetto.proto.perfetto_pb2"
+        cd .. && python -c "import sys; sys.path.insert(0, 'py'); import retrobus_perfetto.proto.perfetto_pb2"
 
   summary:
     name: Summary

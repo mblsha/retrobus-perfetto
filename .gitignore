@@ -25,8 +25,8 @@ share/python-wheels/
 MANIFEST
 
 # Generated protobuf files
-retrobus_perfetto/proto/*_pb2.py
-retrobus_perfetto/proto/*_pb2_grpc.py
+py/retrobus_perfetto/proto/*_pb2.py
+py/retrobus_perfetto/proto/*_pb2_grpc.py
 
 # PyInstaller
 *.manifest
@@ -68,3 +68,10 @@ Thumbs.db
 
 # Example outputs
 *.perfetto-trace
+
+# C++ build artifacts
+cpp/build/
+cpp/cmake-build-*/
+cpp/*.so
+cpp/*.dylib
+cpp/*.dll

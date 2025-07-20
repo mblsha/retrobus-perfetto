@@ -6,15 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 retrobus-perfetto is a minimal Perfetto trace generation library for retrocomputer emulators. It provides a CPU-independent API for creating execution traces that can be visualized in the Perfetto UI.
 
-## Key Commands
+This is a multi-language project:
+- `py/` - Python implementation
+- `cpp/` - C++ implementation (planned)
+- `proto/` - Shared protocol buffer definitions
 
-### Development Setup
+## Python Development
+
+### Working Directory
+When working on Python code, operate from the `py/` directory.
+
+### Key Commands
 ```bash
+cd py/
+
 # Install for development (includes protoc tools)
 pip install -e ".[dev]"
-
-# Or install dev dependencies from requirements file
-pip install -r requirements-dev.txt
 
 # Run tests
 pytest
@@ -23,7 +30,7 @@ pytest
 pytest --cov=retrobus_perfetto --cov-report=xml --cov-report=term
 
 # Run linter
-pylint $(git ls-files '*.py')
+pylint $(git ls-files '*.py' | grep "^py/")
 
 # Run type checker (uses mypy.ini for configuration)
 mypy retrobus_perfetto --config-file mypy.ini
@@ -33,17 +40,22 @@ python -m build
 ```
 
 ### Building
-The protobuf files are automatically compiled during installation via setup.py. Manual compilation if needed:
+The protobuf files are automatically compiled during installation. The build process:
+1. Reads proto files from `../proto/`
+2. Generates Python files in `py/retrobus_perfetto/proto/`
+
+Manual compilation if needed:
 ```bash
-python -m grpc_tools.protoc --proto_path=retrobus_perfetto/proto --python_out=retrobus_perfetto/proto perfetto.proto
+cd py/
+python -m grpc_tools.protoc --proto_path=../proto --python_out=retrobus_perfetto/proto ../proto/perfetto.proto
 ```
 
 ## Architecture
 
-### Core Components
-- **PerfettoTraceBuilder** (builder.py): Main API class using builder pattern for trace construction
-- **Annotations** (annotations.py): Helper classes for structured metadata
-- **Proto files**: perfetto.proto defines the trace format; perfetto_pb2.py is auto-generated
+### Core Components (Python)
+- **PerfettoTraceBuilder** (py/retrobus_perfetto/builder.py): Main API class using builder pattern for trace construction
+- **Annotations** (py/retrobus_perfetto/annotations.py): Helper classes for structured metadata
+- **Proto files**: proto/perfetto.proto defines the trace format; generated files go to py/retrobus_perfetto/proto/
 
 ### Key Design Patterns
 1. **Builder Pattern**: Fluent API for constructing traces
@@ -58,14 +70,18 @@ python -m grpc_tools.protoc --proto_path=retrobus_perfetto/proto --python_out=re
 
 ## Testing Approach
 - Uses pytest with mocked protobuf dependencies to avoid compilation requirements during testing
-- Test files in tests/ directory
+- Test files in py/tests/ directory
 - Coverage reports available via pytest-cov
+
+## CI/CD
+- **Python CI**: `.github/workflows/python-ci.yml` - runs when py/ or proto/ changes
+- **C++ CI**: `.github/workflows/cpp-ci.yml` - placeholder for future C++ tests
 
 ## Important Notes
 - The library is CPU-independent - no assumptions about specific architectures
 - Direct protobuf usage for maximum control (future may migrate to official SDK)
 - Generated traces viewable at ui.perfetto.dev
-- CI/CD pipeline includes: pylint, mypy, pytest with coverage, example testing, and package building
+- Python CI pipeline includes: pylint, mypy, pytest with coverage, example testing, and package building
 - Tests run on Python 3.8, 3.9, 3.10, 3.11, and 3.12
-- Type checking configured to handle dynamic protobuf imports (see mypy.ini)
+- Type checking configured to handle dynamic protobuf imports (see py/mypy.ini)
 - Package is PEP 561 compliant with type stubs for generated protobuf code

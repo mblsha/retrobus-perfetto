@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "grpcio-tools>=1.48.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retrobus-perfetto"
+version = "0.1.0"
+description = "A minimal Perfetto trace generation library for retrocomputer emulators"
+readme = "README.md"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: System :: Emulators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "protobuf>=3.20.0,<5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "grpcio-tools>=1.48.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "pylint>=2.15.0",
+    "mypy>=1.0.0",
+    "types-protobuf>=4.24.0",
+    "build>=0.10.0",
+    "twine>=4.0.0",
+]
+
+[project.urls]
+"Bug Reports" = "https://github.com/yourusername/retrobus-perfetto/issues"
+"Source" = "https://github.com/yourusername/retrobus-perfetto"
+
+[tool.setuptools]
+packages = ["retrobus_perfetto"]
+package-data = {"retrobus_perfetto" = ["py.typed", "*.pyi"]}
+
+[tool.setuptools.package-dir]
+retrobus_perfetto = "retrobus_perfetto"
+
+# Custom build configuration
+[tool.retrobus]
+proto_path = "../../proto"
+proto_out = "retrobus_perfetto/proto"
