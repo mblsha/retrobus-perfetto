@@ -16,6 +16,14 @@ find_package(Protobuf REQUIRED)
 # Try to find absl, but don't fail if not found (Ubuntu compatibility)
 find_package(absl QUIET)
 
+# If absl not found via CMake, try pkg-config (for Ubuntu/Debian)
+if(NOT absl_FOUND)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(ABSL QUIET absl_base absl_log absl_strings)
+    endif()
+endif()
+
 # Header-only library
 add_library(retrobus_perfetto INTERFACE)
 target_include_directories(retrobus_perfetto INTERFACE
@@ -57,18 +65,24 @@ target_link_libraries(perfetto_proto PUBLIC
     protobuf::libprotobuf
 )
 
-# Link abseil if found (for systems with proper CMake config)
+# Link abseil if found
 if(absl_FOUND)
+    # Modern CMake config (macOS, some Linux)
     target_link_libraries(perfetto_proto PUBLIC
         absl::log
         absl::log_internal_check_op
         absl::log_internal_message
         absl::strings
     )
+elseif(ABSL_FOUND)
+    # pkg-config method (Ubuntu/Debian)
+    target_include_directories(perfetto_proto PUBLIC ${ABSL_INCLUDE_DIRS})
+    target_link_libraries(perfetto_proto PUBLIC ${ABSL_LIBRARIES})
+    target_compile_options(perfetto_proto PUBLIC ${ABSL_CFLAGS_OTHER})
 else()
-    # For Ubuntu/Debian systems without CMake config
-    # The protobuf package should already be linked with abseil
-    message(STATUS "absl CMake config not found, assuming protobuf is already linked with abseil")
+    # Fallback: assume protobuf is already properly linked
+    # This is common on systems where protobuf was built with abseil support
+    message(STATUS "absl not found via CMake or pkg-config, assuming protobuf handles abseil dependencies")
 endif()
 set_target_properties(perfetto_proto PROPERTIES
     POSITION_INDEPENDENT_CODE ON
