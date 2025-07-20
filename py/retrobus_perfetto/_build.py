@@ -17,13 +17,12 @@ class BuildProtoCommand:
         project_root = Path(__file__).parent.parent
         proto_path = project_root.parent / "proto"
         proto_out = project_root / "retrobus_perfetto" / "proto"
-        
+
         # Create output directory
         proto_out.mkdir(parents=True, exist_ok=True)
-        
+
         # Create __init__.py in proto directory
         (proto_out / "__init__.py").write_text("")
-        
         proto_file = proto_path / "perfetto.proto"
 
         if not proto_file.exists():

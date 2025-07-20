@@ -15,6 +15,7 @@ from retrobus_perfetto import PerfettoTraceBuilder  # pylint: disable=C0413
 
 
 def main():
+    """Demonstrate retrobus_perfetto usage with an example CPU emulator trace."""
     # Create a trace for a simple CPU emulator
     builder = PerfettoTraceBuilder("Example Emulator")
 

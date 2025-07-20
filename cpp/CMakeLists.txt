@@ -12,7 +12,9 @@ option(BUILD_EXAMPLES "Build example programs" ON)
 
 # Find protobuf and its dependencies
 find_package(Protobuf REQUIRED)
-find_package(absl REQUIRED)
+
+# Try to find absl, but don't fail if not found (Ubuntu compatibility)
+find_package(absl QUIET)
 
 # Header-only library
 add_library(retrobus_perfetto INTERFACE)
@@ -53,11 +55,21 @@ target_include_directories(perfetto_proto PUBLIC
 )
 target_link_libraries(perfetto_proto PUBLIC
     protobuf::libprotobuf
-    absl::log
-    absl::log_internal_check_op
-    absl::log_internal_message
-    absl::strings
 )
+
+# Link abseil if found (for systems with proper CMake config)
+if(absl_FOUND)
+    target_link_libraries(perfetto_proto PUBLIC
+        absl::log
+        absl::log_internal_check_op
+        absl::log_internal_message
+        absl::strings
+    )
+else()
+    # For Ubuntu/Debian systems without CMake config
+    # The protobuf package should already be linked with abseil
+    message(STATUS "absl CMake config not found, assuming protobuf is already linked with abseil")
+endif()
 set_target_properties(perfetto_proto PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
