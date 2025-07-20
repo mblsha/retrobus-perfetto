@@ -6,8 +6,8 @@ A minimal Perfetto trace generation library for retrocomputer emulators. This pr
 
 This is a multi-language project with implementations in different languages:
 
-- `py/` - Python implementation (currently available)
-- `cpp/` - C++ implementation (planned, see design doc)
+- `py/` - Python implementation
+- `cpp/` - C++ header-only implementation
 - `proto/` - Shared protocol buffer definitions
 
 ## Features

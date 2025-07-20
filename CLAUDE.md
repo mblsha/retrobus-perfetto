@@ -8,7 +8,7 @@ retrobus-perfetto is a minimal Perfetto trace generation library for retrocomput
 
 This is a multi-language project:
 - `py/` - Python implementation
-- `cpp/` - C++ implementation (planned)
+- `cpp/` - C++ header-only implementation
 - `proto/` - Shared protocol buffer definitions
 
 ## Python Development
@@ -75,7 +75,63 @@ python -m grpc_tools.protoc --proto_path=../proto --python_out=retrobus_perfetto
 
 ## CI/CD
 - **Python CI**: `.github/workflows/python-ci.yml` - runs when py/ or proto/ changes
-- **C++ CI**: `.github/workflows/cpp-ci.yml` - placeholder for future C++ tests
+- **C++ CI**: `.github/workflows/cpp-ci.yml` - builds and tests C++ implementation
+  - Matrix builds: Ubuntu/macOS × Debug/Release × g++/clang++
+  - Runs unit tests with ctest
+  - Executes example programs
+  - Performs static analysis with clang-tidy and cppcheck
+  - Verifies documentation
+
+## C++ Development
+
+### Working Directory
+When working on C++ code, operate from the `cpp/` directory.
+
+### Key Commands
+```bash
+cd cpp/
+mkdir build && cd build
+
+# Configure and build
+cmake ..
+cmake --build .
+
+# Run tests
+ctest --output-on-failure
+# or
+./tests/test_retrobus_perfetto
+
+# Run examples
+./examples/basic_example
+./examples/cpu_emulator_example
+
+# Build with specific options
+cmake .. -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
+cmake .. -DCMAKE_BUILD_TYPE=Release
+```
+
+### C++ Implementation Details
+- Header-only library in `cpp/include/retrobus/retrobus_perfetto.hpp`
+- C++17 required for features like string_view and structured bindings
+- Uses CMake FetchContent for Catch2 dependency
+- Protobuf files are generated at build time into `build/proto/`
+- Thread-safe with atomic counters for UUID generation
+- Non-copyable/non-movable due to atomic members
+
+### C++ Build Dependencies
+- CMake 3.14+
+- C++17 compiler (GCC 7+, Clang 5+, MSVC 2017+)
+- Protocol Buffers (protobuf)
+- abseil-cpp (required by protobuf)
+- Catch2 (fetched automatically for tests)
+
+### Known Build Issues
+1. **Abseil linking**: Protobuf depends on abseil. If you get undefined symbols for `absl::lts_*`, ensure abseil libraries are linked:
+   - The CMakeLists.txt links: `absl::log`, `absl::log_internal_check_op`, `absl::log_internal_message`, `absl::strings`
+
+2. **C++17 compatibility**: The code avoids C++20 features:
+   - Uses manual suffix checking instead of `string_view::ends_with`
+   - Explicit move constructor deletion due to atomic members
 
 ## Important Notes
 - The library is CPU-independent - no assumptions about specific architectures
@@ -85,3 +141,5 @@ python -m grpc_tools.protoc --proto_path=../proto --python_out=retrobus_perfetto
 - Tests run on Python 3.8, 3.9, 3.10, 3.11, and 3.12
 - Type checking configured to handle dynamic protobuf imports (see py/mypy.ini)
 - Package is PEP 561 compliant with type stubs for generated protobuf code
+- C++ implementation is header-only for easy integration
+- Both Python and C++ implementations produce compatible trace files

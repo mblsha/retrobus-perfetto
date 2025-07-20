@@ -9,16 +9,96 @@ on:
       - 'proto/**'
       - '.github/workflows/cpp-ci.yml'
 
+defaults:
+  run:
+    working-directory: cpp
+
 jobs:
-  placeholder:
-    name: C++ CI Placeholder
-    runs-on: ubuntu-latest
+  build-and-test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        build_type: [Debug, Release]
+        include:
+          - os: ubuntu-latest
+            cxx: g++
+          - os: macos-latest
+            cxx: clang++
+
     steps:
-    - name: Placeholder
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies (Ubuntu)
+      if: startsWith(matrix.os, 'ubuntu')
       run: |
-        echo "C++ CI workflow will be implemented when C++ code is added"
-        echo "This workflow will include:"
-        echo "  - CMake build"
-        echo "  - Unit tests"
-        echo "  - Static analysis"
-        echo "  - Example compilation"
+        sudo apt-get update
+        sudo apt-get install -y cmake protobuf-compiler libprotobuf-dev libabsl-dev
+
+    - name: Install dependencies (macOS)
+      if: startsWith(matrix.os, 'macos')
+      run: |
+        brew install cmake protobuf abseil
+
+    - name: Configure CMake
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+    - name: Build
+      run: |
+        cd build
+        cmake --build . --config ${{ matrix.build_type }} -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+    - name: Run tests
+      run: |
+        cd build
+        ctest --output-on-failure -C ${{ matrix.build_type }}
+
+    - name: Run examples
+      run: |
+        cd build
+        ./examples/basic_example
+        ./examples/cpu_emulator_example
+        # Check that trace files were created
+        test -f example.perfetto-trace
+        test -f z80_emulation.perfetto-trace
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-tidy cppcheck
+
+    - name: Run clang-tidy
+      run: |
+        find include -name '*.hpp' -exec clang-tidy {} -checks='-*,bugprone-*,cert-*,clang-analyzer-*,modernize-*,performance-*,portability-*,readability-*' -- -std=c++17 -I/usr/include \;
+      continue-on-error: true  # Don't fail the build on warnings
+
+    - name: Run cppcheck
+      run: |
+        cppcheck --enable=all --std=c++17 --suppress=missingIncludeSystem include/
+      continue-on-error: true  # Don't fail the build on warnings
+
+  documentation:
+    name: Check Documentation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check README exists
+      run: test -f README.md
+
+    - name: Check header documentation
+      run: |
+        # Check that the main header has documentation
+        grep -q "retrobus_perfetto.hpp - Header-only C++ library" include/retrobus/retrobus_perfetto.hpp
