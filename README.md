@@ -9,6 +9,7 @@ This is a multi-language project with implementations in different languages:
 - `py/` - Python implementation
 - `cpp/` - C++ header-only implementation
 - `proto/` - Shared protocol buffer definitions
+- `tools/` - Analysis tools for Perfetto traces
 
 ## Features
 
@@ -67,6 +68,7 @@ builder.save("trace.perfetto-trace")
 - [Python Implementation](py/README.md)
 - [C++ Design Document](cpp-header-only-design.md)
 - [Protocol Buffer Definitions](proto/README.md)
+- [Trace Analysis Tools](tools/README.md)
 
 ## Viewing Traces
 
