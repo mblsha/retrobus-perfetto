@@ -2,8 +2,23 @@
 #include <retrobus/retrobus_perfetto.hpp>
 #include <filesystem>
 #include <fstream>
+#include <google/protobuf/text_format.h>
 
 using namespace retrobus;
+
+// Helper function to convert builder output to textproto string
+std::string to_textproto(const PerfettoTraceBuilder& builder) {
+    auto data = builder.serialize();
+    
+    perfetto::protos::Trace trace;
+    if (!trace.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
+        return "ERROR: Failed to parse trace data";
+    }
+    
+    std::string textproto;
+    google::protobuf::TextFormat::PrintToString(trace, &textproto);
+    return textproto;
+}
 
 TEST_CASE("PerfettoTraceBuilder construction", "[builder]") {
     SECTION("Default constructor") {
@@ -279,5 +294,520 @@ TEST_CASE("Thread safety", "[builder][thread-safety]") {
         // All IDs should be unique
         std::set<uint64_t> unique_ids(thread_ids.begin(), thread_ids.end());
         REQUIRE(unique_ids.size() == num_threads);
+    }
+}
+
+TEST_CASE("Textproto snapshot validation", "[builder][snapshot]") {
+    SECTION("Empty trace") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Single thread") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto thread = builder.add_thread("TestThread");
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "TestThread"
+    thread {
+      pid: 1234
+      tid: 1001
+      thread_name: "TestThread"
+    }
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Basic slice event") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto thread = builder.add_thread("TestThread");
+        
+        builder.begin_slice(thread, "test_function", 1000);
+        builder.end_slice(thread, 2000);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "TestThread"
+    thread {
+      pid: 1234
+      tid: 1001
+      thread_name: "TestThread"
+    }
+  }
+}
+packet {
+  timestamp: 1000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_BEGIN
+    track_uuid: 2
+    name: "test_function"
+  }
+}
+packet {
+  timestamp: 2000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_END
+    track_uuid: 2
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Instant event") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto thread = builder.add_thread("TestThread");
+        
+        builder.add_instant_event(thread, "checkpoint", 1500);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "TestThread"
+    thread {
+      pid: 1234
+      tid: 1001
+      thread_name: "TestThread"
+    }
+  }
+}
+packet {
+  timestamp: 1500
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_INSTANT
+    track_uuid: 2
+    name: "checkpoint"
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Counter track and updates") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto counter = builder.add_counter_track("Memory", "MB");
+        
+        builder.update_counter(counter, 100, 1000);
+        builder.update_counter(counter, 150.5, 2000);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "Memory (MB)"
+    parent_uuid: 1
+  }
+}
+packet {
+  timestamp: 1000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_COUNTER
+    track_uuid: 2
+    counter_value: 100
+  }
+}
+packet {
+  timestamp: 2000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_COUNTER
+    track_uuid: 2
+    double_counter_value: 150.5
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Slice with annotations") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto thread = builder.add_thread("TestThread");
+        
+        auto event = builder.begin_slice(thread, "test_function", 1000);
+        event.add_annotation("arg_int", 42)
+             .add_annotation("arg_float", 3.14)
+             .add_annotation("arg_bool", true)
+             .add_annotation("arg_string", "hello")
+             .add_annotation("pc", 0x1234);  // Should be formatted as pointer
+        
+        builder.end_slice(thread, 2000);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "TestThread"
+    thread {
+      pid: 1234
+      tid: 1001
+      thread_name: "TestThread"
+    }
+  }
+}
+packet {
+  timestamp: 1000
+  trusted_packet_sequence_id: 1
+  track_event {
+    debug_annotations {
+      int_value: 42
+      name: "arg_int"
+    }
+    debug_annotations {
+      double_value: 3.14
+      name: "arg_float"
+    }
+    debug_annotations {
+      bool_value: true
+      name: "arg_bool"
+    }
+    debug_annotations {
+      string_value: "hello"
+      name: "arg_string"
+    }
+    debug_annotations {
+      pointer_value: 4660
+      name: "pc"
+    }
+    type: TYPE_SLICE_BEGIN
+    track_uuid: 2
+    name: "test_function"
+  }
+}
+packet {
+  timestamp: 2000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_END
+    track_uuid: 2
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Flow events") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto thread1 = builder.add_thread("Producer");
+        auto thread2 = builder.add_thread("Consumer");
+        
+        uint64_t flow_id = 12345;
+        
+        builder.add_flow(thread1, "Send", 1000, flow_id);
+        builder.add_flow(thread2, "Receive", 2000, flow_id, true);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "Producer"
+    thread {
+      pid: 1234
+      tid: 1001
+      thread_name: "Producer"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 3
+    name: "Consumer"
+    thread {
+      pid: 1234
+      tid: 1002
+      thread_name: "Consumer"
+    }
+  }
+}
+packet {
+  timestamp: 1000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_INSTANT
+    track_uuid: 2
+    name: "Send"
+    flow_ids: 12345
+  }
+}
+packet {
+  timestamp: 2000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_INSTANT
+    track_uuid: 3
+    name: "Receive"
+    terminating_flow_ids: 12345
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Nested slices") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto thread = builder.add_thread("TestThread");
+        
+        builder.begin_slice(thread, "outer_function", 1000);
+        builder.begin_slice(thread, "inner_function", 1100);
+        builder.end_slice(thread, 1200);
+        builder.end_slice(thread, 1300);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "TestThread"
+    thread {
+      pid: 1234
+      tid: 1001
+      thread_name: "TestThread"
+    }
+  }
+}
+packet {
+  timestamp: 1000
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_BEGIN
+    track_uuid: 2
+    name: "outer_function"
+  }
+}
+packet {
+  timestamp: 1100
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_BEGIN
+    track_uuid: 2
+    name: "inner_function"
+  }
+}
+packet {
+  timestamp: 1200
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_END
+    track_uuid: 2
+  }
+}
+packet {
+  timestamp: 1300
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_END
+    track_uuid: 2
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
+    }
+    
+    SECTION("Structured annotations") {
+        PerfettoTraceBuilder builder("TestProcess", 1234);
+        auto thread = builder.add_thread("TestThread");
+        
+        auto event = builder.begin_slice(thread, "cpu_instruction", 1000);
+        
+        event.annotation("registers")
+            .integer("A", 0x12)
+            .integer("B", 0x34)
+            .pointer("PC", 0x1234)
+            .pointer("SP", 0x8000);
+        
+        event.annotation("flags")
+            .boolean("zero", true)
+            .boolean("carry", false);
+        
+        builder.end_slice(thread, 1100);
+        
+        const char* expected = R"proto(packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 1
+    name: "TestProcess"
+    process {
+      pid: 1234
+      process_name: "TestProcess"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 1
+  track_descriptor {
+    uuid: 2
+    name: "TestThread"
+    thread {
+      pid: 1234
+      tid: 1001
+      thread_name: "TestThread"
+    }
+  }
+}
+packet {
+  timestamp: 1000
+  trusted_packet_sequence_id: 1
+  track_event {
+    debug_annotations {
+      nested_value {
+        nested_type: DICT
+        dict_keys: "A"
+        dict_keys: "B"
+        dict_keys: "PC"
+        dict_keys: "SP"
+        dict_values {
+          int_value: 18
+        }
+        dict_values {
+          int_value: 52
+        }
+        dict_values {
+          string_value: "0x1234"
+        }
+        dict_values {
+          string_value: "0x8000"
+        }
+      }
+      name: "registers"
+    }
+    debug_annotations {
+      nested_value {
+        nested_type: DICT
+        dict_keys: "zero"
+        dict_keys: "carry"
+        dict_values {
+          bool_value: true
+        }
+        dict_values {
+          bool_value: false
+        }
+      }
+      name: "flags"
+    }
+    type: TYPE_SLICE_BEGIN
+    track_uuid: 2
+    name: "cpu_instruction"
+  }
+}
+packet {
+  timestamp: 1100
+  trusted_packet_sequence_id: 1
+  track_event {
+    type: TYPE_SLICE_END
+    track_uuid: 2
+  }
+}
+)proto";
+        
+        REQUIRE(to_textproto(builder) == expected);
     }
 }
