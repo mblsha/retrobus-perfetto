@@ -288,3 +288,12 @@ class PerfettoTraceBuilder:
             Dictionary with track metadata
         """
         return self.track_metadata.get(track_uuid, {})
+    
+    def get_all_tracks(self) -> list:
+        """
+        Get all tracks in the trace.
+
+        Returns:
+            List of (uuid, metadata) tuples for all tracks
+        """
+        return list(self.track_metadata.items())

@@ -1,52 +1,15 @@
-"""Basic tests for PerfettoTraceBuilder."""
+"""Basic functional tests for PerfettoTraceBuilder."""
 # pylint: disable=W0621  # redefined-outer-name is expected for pytest fixtures
 
-from unittest.mock import Mock, patch
 import pytest
-
-
-# Mock the protobuf module for testing without compilation
-@pytest.fixture
-def perfetto_mock():
-    """Create mock perfetto protobuf module."""
-    mock = Mock()
-
-    # Mock Trace class
-    mock.Trace = Mock
-    mock.Trace.return_value = Mock(packet=Mock(add=Mock(return_value=Mock())))
-
-    # Mock TracePacket
-    mock.TracePacket = Mock
-
-    # Mock TrackEvent types
-    mock.TrackEvent = Mock()
-    mock.TrackEvent.TYPE_SLICE_BEGIN = 1
-    mock.TrackEvent.TYPE_SLICE_END = 2
-    mock.TrackEvent.TYPE_INSTANT = 3
-    mock.TrackEvent.TYPE_COUNTER = 4
-
-    # Mock BuiltinClock
-    mock.BuiltinClock = Mock()
-    mock.BuiltinClock.BUILTIN_CLOCK_BOOTTIME = 6
-
-    return mock
+from retrobus_perfetto import PerfettoTraceBuilder
+from retrobus_perfetto.proto import perfetto_pb2
 
 
 @pytest.fixture
-def trace_builder(perfetto_mock):
-    """Create a PerfettoTraceBuilder with mocked protobuf."""
-    # Patch the module before importing
-    import sys  # pylint: disable=C0415
-    if 'retrobus_perfetto.proto.perfetto_pb2' in sys.modules:
-        del sys.modules['retrobus_perfetto.proto.perfetto_pb2']
-    if 'retrobus_perfetto.builder' in sys.modules:
-        del sys.modules['retrobus_perfetto.builder']
-    if 'retrobus_perfetto' in sys.modules:
-        del sys.modules['retrobus_perfetto']
-
-    with patch.dict('sys.modules', {'retrobus_perfetto.proto.perfetto_pb2': perfetto_mock}):
-        from retrobus_perfetto import PerfettoTraceBuilder  # pylint: disable=C0415
-        return PerfettoTraceBuilder("Test Process")
+def trace_builder():
+    """Create a PerfettoTraceBuilder instance."""
+    return PerfettoTraceBuilder("Test Process")
 
 
 def test_builder_initialization(trace_builder):
@@ -89,6 +52,21 @@ def test_slice_events(trace_builder):
 
     # End slice
     trace_builder.end_slice(thread, 2000)
+    
+    # Verify trace structure
+    data = trace_builder.serialize()
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    
+    # Should have 3 packets: process, thread, slice begin, slice end
+    assert len(trace.packet) == 4
+    
+    # Verify slice begin event
+    slice_begin = trace.packet[2]
+    assert slice_begin.timestamp == 1000
+    assert slice_begin.track_event.type == perfetto_pb2.TrackEvent.TYPE_SLICE_BEGIN
+    assert slice_begin.track_event.name == "test_function"
+    assert len(slice_begin.track_event.debug_annotations) == 4
 
 
 def test_instant_events(trace_builder):
@@ -103,6 +81,23 @@ def test_instant_events(trace_builder):
         ann.integer("value", 123)
         ann.string("name", "test")
         ann.bool("flag", False)
+    
+    # Verify event structure
+    data = trace_builder.serialize()
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    
+    # Find instant event packet
+    instant_packet = trace.packet[2]
+    assert instant_packet.timestamp == 1500
+    assert instant_packet.track_event.type == perfetto_pb2.TrackEvent.TYPE_INSTANT
+    assert instant_packet.track_event.name == "test_event"
+    
+    # Check structured annotation
+    assert len(instant_packet.track_event.debug_annotations) == 1
+    ann = instant_packet.track_event.debug_annotations[0]
+    assert ann.name == "test_group"
+    assert len(ann.dict_entries) == 3
 
 
 def test_counter_tracks(trace_builder):
@@ -119,6 +114,26 @@ def test_counter_tracks(trace_builder):
     assert info['type'] == 'counter'
     assert info['name'] == 'Memory'
     assert info['unit'] == 'MB'
+    
+    # Verify counter updates in trace
+    data = trace_builder.serialize()
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    
+    # Counter track descriptor
+    counter_desc = trace.packet[1]
+    assert counter_desc.track_descriptor.name == "Memory (MB)"
+    # Note: Python implementation doesn't set counter.unit_name field
+    
+    # Counter updates
+    update1 = trace.packet[2]
+    assert update1.timestamp == 1000
+    assert update1.track_event.type == perfetto_pb2.TrackEvent.TYPE_COUNTER
+    assert update1.track_event.counter_value == 100
+    
+    update2 = trace.packet[3]
+    assert update2.timestamp == 2000
+    assert update2.track_event.double_counter_value == 150.5
 
 
 def test_flow_events(trace_builder):
@@ -139,72 +154,141 @@ def test_flow_events(trace_builder):
     # Terminate flow
     event3 = trace_builder.add_flow(thread2, "End", 3000, flow_id, terminating=True)
     assert event3 is not None
-
-
-def test_serialization(trace_builder, perfetto_mock):  # pylint: disable=W0613
-    """Test trace serialization."""
-    # Mock the SerializeToString method
-    mock_trace = Mock()
-    mock_trace.SerializeToString.return_value = b"mock_trace_data"
-    trace_builder.trace = mock_trace
-
+    
+    # Verify flow events
     data = trace_builder.serialize()
-    assert data == b"mock_trace_data"
-    mock_trace.SerializeToString.assert_called_once()
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    
+    # First flow event
+    flow1 = trace.packet[3]
+    assert flow1.timestamp == 1000
+    assert flow1.track_event.flow_ids[0] == flow_id
+    
+    # Continue flow
+    flow2 = trace.packet[4]
+    assert flow2.timestamp == 2000
+    assert flow2.track_event.flow_ids[0] == flow_id
+    
+    # Terminate flow
+    flow3 = trace.packet[5]
+    assert flow3.timestamp == 3000
+    # Terminating flows only have terminating_flow_ids, not flow_ids
+    assert flow3.track_event.terminating_flow_ids[0] == flow_id
 
 
-def test_save_to_file(trace_builder, tmp_path, perfetto_mock):  # pylint: disable=W0613
+def test_serialization(trace_builder):
+    """Test trace serialization."""
+    # Add some content
+    thread = trace_builder.add_thread("Test")
+    trace_builder.add_instant_event(thread, "event", 1000)
+    
+    data = trace_builder.serialize()
+    assert isinstance(data, bytes)
+    assert len(data) > 0
+    
+    # Verify it's valid protobuf
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    assert len(trace.packet) >= 3  # process, thread, event
+
+
+def test_save_to_file(trace_builder, tmp_path):
     """Test saving trace to file."""
-    # Mock the SerializeToString method
-    mock_trace = Mock()
-    mock_trace.SerializeToString.return_value = b"mock_trace_data"
-    trace_builder.trace = mock_trace
-
+    # Add some content
+    thread = trace_builder.add_thread("Test")
+    trace_builder.add_instant_event(thread, "event", 1000)
+    
     # Save to temporary file
     output_file = tmp_path / "test.perfetto-trace"
     trace_builder.save(str(output_file))
 
     # Verify file contents
     assert output_file.exists()
-    assert output_file.read_bytes() == b"mock_trace_data"
+    
+    # Load and parse the file
+    data = output_file.read_bytes()
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    assert len(trace.packet) >= 3
 
 
 def test_annotation_type_detection():
     """Test automatic type detection in annotations."""
-    from retrobus_perfetto.annotations import DebugAnnotationBuilder  # pylint: disable=C0415
-
-    mock_ann = Mock()
-    mock_ann.dict_entries = Mock()
-    mock_ann.dict_entries.add.return_value = Mock()
-
-    ann_builder = DebugAnnotationBuilder(mock_ann)
-
-    # Test different types
-    ann_builder.auto("test_int", 42)
-    ann_builder.auto("test_bool", True)
-    ann_builder.auto("test_float", 3.14)
-    ann_builder.auto("test_string", "hello")
-    ann_builder.auto("test_object", {"key": "value"})
-
-    assert mock_ann.dict_entries.add.call_count == 5
+    builder = PerfettoTraceBuilder("Test")
+    thread = builder.add_thread("Test Thread")
+    
+    event = builder.begin_slice(thread, "test", 1000)
+    event.add_annotations({
+        "test_int": 42,
+        "test_bool": True,
+        "test_float": 3.14,
+        "test_string": "hello",
+        "test_object": {"key": "value"}  # Will be converted to string
+    })
+    
+    # Verify annotations in trace
+    data = builder.serialize()
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    
+    annotations = trace.packet[2].track_event.debug_annotations
+    
+    # Find each annotation and verify type
+    ann_dict = {ann.name: ann for ann in annotations}
+    
+    assert ann_dict["test_int"].int_value == 42
+    assert ann_dict["test_bool"].bool_value is True
+    assert ann_dict["test_float"].double_value == 3.14
+    assert ann_dict["test_string"].string_value == "hello"
+    assert ann_dict["test_object"].string_value == "{'key': 'value'}"
 
 
 def test_pointer_annotation_heuristic():
     """Test that certain field names are treated as pointers."""
-    from retrobus_perfetto.annotations import TrackEventWrapper  # pylint: disable=C0415
-
-    mock_event = Mock()
-    mock_event.debug_annotations = Mock()
-    mock_ann = Mock()
-    mock_event.debug_annotations.add.return_value = mock_ann
-
-    wrapper = TrackEventWrapper(mock_event)
-    wrapper.add_annotations({
-        "pc": 0x1234,           # Should be pointer
-        "address": 0x5678,      # Should be pointer
-        "count": 100,           # Should be int
-        "stack_pointer": 0x7FFF # Should be pointer
+    builder = PerfettoTraceBuilder("Test")
+    thread = builder.add_thread("Test Thread")
+    
+    event = builder.begin_slice(thread, "test", 1000)
+    event.add_annotations({
+        "reg_pc": 0x1234,           # Should be pointer (ends with _pc)
+        "mem_address": 0x5678,      # Should be pointer (ends with _address)
+        "count": 100,               # Should be int
+        "stack_pointer": 0x7FFF     # Should be pointer (ends with _pointer)
     })
+    
+    # Verify annotations in trace
+    data = builder.serialize()
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(data)
+    
+    annotations = trace.packet[2].track_event.debug_annotations
+    ann_dict = {ann.name: ann for ann in annotations}
+    
+    # Pointer fields should have pointer_value
+    assert ann_dict["reg_pc"].pointer_value == 0x1234
+    assert ann_dict["mem_address"].pointer_value == 0x5678
+    assert ann_dict["stack_pointer"].pointer_value == 0x7FFF
+    
+    # Non-pointer field should have int_value
+    assert ann_dict["count"].int_value == 100
 
-    # Verify correct number of annotations added
-    assert mock_event.debug_annotations.add.call_count == 4
+
+def test_get_all_tracks(trace_builder):
+    """Test getting all tracks."""
+    # Add various tracks
+    thread1 = trace_builder.add_thread("Thread 1")
+    thread2 = trace_builder.add_thread("Thread 2")
+    counter = trace_builder.add_counter_track("CPU", "%")
+    
+    tracks = trace_builder.get_all_tracks()
+    
+    # Should have process + 3 tracks
+    assert len(tracks) == 4
+    
+    # Check track names
+    track_names = [info['name'] for uuid, info in tracks]
+    assert "Test Process" in track_names
+    assert "Thread 1" in track_names
+    assert "Thread 2" in track_names
+    assert "CPU" in track_names
