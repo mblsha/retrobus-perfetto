@@ -72,6 +72,32 @@ Generic Perfetto trace parser for exploring and extracting data from traces.
 ./perfetto_trace_parser.py trace.perfetto-trace --hexdump 0x1000
 ```
 
+### 3. perfetto_trace_compare.py
+
+Side-by-side comparison tool for two Perfetto traces that should represent the same execution.
+
+**Features:**
+- Compares execution events from the "Execution" timeline
+- Ignores thread IDs (which may differ between runs)
+- Compares debug annotations as string values
+- Shows exactly where traces diverge
+- Provides detailed diff output for mismatches
+
+**Usage:**
+```bash
+# Basic comparison
+./perfetto_trace_compare.py trace1.perfetto trace2.perfetto
+
+# With verbose progress output
+./perfetto_trace_compare.py trace1.perfetto trace2.perfetto --verbose
+```
+
+**Use Cases:**
+- Verify emulator determinism
+- Compare different emulator implementations
+- Debug non-deterministic behavior
+- Regression testing
+
 ## Customization
 
 ### Adapting for Different CPU Architectures
