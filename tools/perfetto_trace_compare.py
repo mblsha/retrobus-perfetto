@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Perfetto Trace Comparator - Compare execution traces from two Perfetto files
+Perfetto Trace Comparator - Compare execution and memory traces from two Perfetto files
 
 This tool compares two Perfetto traces that should represent the same execution,
-extracting events from the "Execution" timeline and comparing their debug annotations.
+extracting events from the "Execution" and "Memory_Internal" timelines and comparing
+their debug annotations. Memory comparison focuses on offset, value, and pc attributes.
 
 Usage:
-    ./perfetto_trace_compare.py <trace1.perfetto> <trace2.perfetto> [--verbose]
+    ./perfetto_trace_compare.py <trace1.perfetto> <trace2.perfetto> [--verbose] [--skip-memory]
 """
 
 import sys
@@ -45,8 +46,21 @@ class ExecutionEvent:
         sorted_items = sorted(normalized.items())
         return "; ".join(f"{k}={v}" for k, v in sorted_items)
 
+class MemoryEvent:
+    """Represents a single memory event with its annotations"""
+    def __init__(self, name: str, timestamp: int, annotations: Dict[str, str]):
+        self.name = name
+        self.timestamp = timestamp
+        self.annotations = annotations
+    
+    def annotation_string(self) -> str:
+        """Convert annotations to a deterministic string for comparison"""
+        # Sort keys to ensure consistent ordering
+        sorted_items = sorted(self.annotations.items())
+        return "; ".join(f"{k}={v}" for k, v in sorted_items)
+
 class PerfettoTraceComparator:
-    """Compares two Perfetto traces focusing on execution events"""
+    """Compares two Perfetto traces focusing on execution and memory events"""
     
     def __init__(self, trace1_path: Path, trace2_path: Path):
         self.trace1_path = trace1_path
@@ -156,6 +170,260 @@ class PerfettoTraceComparator:
         events.sort(key=lambda e: e.timestamp)
         return events
     
+    def extract_memory_internal_events(self, trace: perfetto_pb2.Trace) -> List[MemoryEvent]:
+        """Extract all events from the Memory_Internal thread"""
+        events = []
+        
+        # First, build a map of track UUIDs to track names
+        track_names = {}
+        for packet in trace.packet:
+            if packet.HasField('track_descriptor'):
+                track_names[packet.track_descriptor.uuid] = packet.track_descriptor.name
+        
+        # Debug: print track info if verbose
+        if len(track_names) < 20:  # Only print if reasonable number
+            has_named_tracks = any(name for name in track_names.values())
+            if not has_named_tracks:
+                print(f"  Note: Found {len(track_names)} unnamed tracks")
+        
+        # Find the Memory_Internal thread UUID
+        memory_internal_uuid = None
+        
+        for uuid, name in track_names.items():
+            if name == "Memory_Internal":
+                memory_internal_uuid = uuid
+                break
+        
+        if not memory_internal_uuid:
+            # Check if track 5 has memory events (based on common pattern)
+            if 5 in track_names:
+                # Quick check for events on track 5
+                sample_count = 0
+                for packet in trace.packet:
+                    if packet.HasField('track_event') and packet.track_event.track_uuid == 5:
+                        if packet.track_event.type == perfetto_pb2.TrackEvent.TYPE_INSTANT:
+                            sample_count += 1
+                            if sample_count >= 10:
+                                break
+                
+                if sample_count > 0:
+                    memory_internal_uuid = 5
+                else:
+                    return []
+            else:
+                return []
+        
+        # Extract ALL events from the Memory_Internal thread
+        for packet in trace.packet:
+            if packet.HasField('track_event'):
+                event = packet.track_event
+                
+                # Check if this event is on the Memory_Internal thread
+                if event.track_uuid != memory_internal_uuid:
+                    continue
+                
+                # Check if this is an instant event (not slice begin/end)
+                if event.type != perfetto_pb2.TrackEvent.TYPE_INSTANT:
+                    continue
+                
+                # Get event name
+                event_name = event.name if event.HasField('name') else ""
+                
+                # Extract annotations
+                annotations = {}
+                for annotation in event.debug_annotations:
+                    # Handle different annotation value types
+                    ann_name = annotation.name if annotation.HasField('name') else ""
+                    
+                    if annotation.HasField('string_value'):
+                        ann_value = annotation.string_value
+                    elif annotation.HasField('int_value'):
+                        ann_value = str(annotation.int_value)
+                    elif annotation.HasField('uint_value'):
+                        ann_value = str(annotation.uint_value)
+                    elif annotation.HasField('bool_value'):
+                        ann_value = str(annotation.bool_value).lower()
+                    elif annotation.HasField('double_value'):
+                        ann_value = str(annotation.double_value)
+                    elif annotation.HasField('pointer_value'):
+                        ann_value = f"0x{annotation.pointer_value:X}"
+                    else:
+                        ann_value = "<unknown>"
+                    
+                    if ann_name:
+                        annotations[ann_name] = ann_value
+                
+                events.append(MemoryEvent(
+                    name=event_name,
+                    timestamp=packet.timestamp,
+                    annotations=annotations
+                ))
+        
+        # Sort by timestamp to ensure correct ordering
+        events.sort(key=lambda e: e.timestamp)
+        return events
+    
+    def extract_memory_external_events(self, trace: perfetto_pb2.Trace) -> List[MemoryEvent]:
+        """Extract all events from the Memory_External thread"""
+        events = []
+        
+        # First, build a map of track UUIDs to track names
+        track_names = {}
+        for packet in trace.packet:
+            if packet.HasField('track_descriptor'):
+                track_names[packet.track_descriptor.uuid] = packet.track_descriptor.name
+        
+        # Debug: print track info if verbose
+        if len(track_names) < 20:  # Only print if reasonable number
+            has_named_tracks = any(name for name in track_names.values())
+            if not has_named_tracks:
+                print(f"  Note: Found {len(track_names)} unnamed tracks")
+        
+        # Find the Memory_External thread UUID
+        memory_external_uuid = None
+        
+        for uuid, name in track_names.items():
+            if name == "Memory_External":
+                memory_external_uuid = uuid
+                break
+        
+        if not memory_external_uuid:
+            # Check if track 6 has memory events (based on common pattern)
+            if 6 in track_names:
+                # Quick check for events on track 6
+                sample_count = 0
+                for packet in trace.packet:
+                    if packet.HasField('track_event') and packet.track_event.track_uuid == 6:
+                        if packet.track_event.type == perfetto_pb2.TrackEvent.TYPE_INSTANT:
+                            sample_count += 1
+                            if sample_count >= 10:
+                                break
+                
+                if sample_count > 0:
+                    memory_external_uuid = 6
+                else:
+                    return []
+            else:
+                return []
+        
+        # Extract ALL events from the Memory_External thread
+        for packet in trace.packet:
+            if packet.HasField('track_event'):
+                event = packet.track_event
+                
+                # Check if this event is on the Memory_External thread
+                if event.track_uuid != memory_external_uuid:
+                    continue
+                
+                # Check if this is an instant event (not slice begin/end)
+                if event.type != perfetto_pb2.TrackEvent.TYPE_INSTANT:
+                    continue
+                
+                # Get event name
+                event_name = event.name if event.HasField('name') else ""
+                
+                # Extract annotations
+                annotations = {}
+                for annotation in event.debug_annotations:
+                    # Handle different annotation value types
+                    ann_name = annotation.name if annotation.HasField('name') else ""
+                    
+                    if annotation.HasField('string_value'):
+                        ann_value = annotation.string_value
+                    elif annotation.HasField('int_value'):
+                        ann_value = str(annotation.int_value)
+                    elif annotation.HasField('uint_value'):
+                        ann_value = str(annotation.uint_value)
+                    elif annotation.HasField('bool_value'):
+                        ann_value = str(annotation.bool_value).lower()
+                    elif annotation.HasField('double_value'):
+                        ann_value = str(annotation.double_value)
+                    elif annotation.HasField('pointer_value'):
+                        ann_value = f"0x{annotation.pointer_value:X}"
+                    else:
+                        ann_value = "<unknown>"
+                    
+                    if ann_name:
+                        annotations[ann_name] = ann_value
+                
+                events.append(MemoryEvent(
+                    name=event_name,
+                    timestamp=packet.timestamp,
+                    annotations=annotations
+                ))
+        
+        # Sort by timestamp to ensure correct ordering
+        events.sort(key=lambda e: e.timestamp)
+        return events
+    
+    def normalize_memory_events(self, events: List[MemoryEvent]) -> List[MemoryEvent]:
+        """Normalize memory events by breaking down multi-byte events into single-byte events"""
+        normalized = []
+        
+        for event in events:
+            annotations = event.annotations
+            
+            # Check if this is a multi-byte event
+            if 'size' in annotations and int(annotations.get('size', '1')) > 1:
+                # Multi-byte event - break it down
+                size = int(annotations['size'])
+                base_addr = annotations.get('address', annotations.get('addr', '0x0'))
+                if base_addr.startswith('0x'):
+                    base_addr = int(base_addr, 16)
+                else:
+                    base_addr = int(base_addr)
+                
+                # Extract value
+                value_str = annotations.get('value', '0x0')
+                if value_str.startswith('0x'):
+                    value = int(value_str, 16)
+                else:
+                    value = int(value_str)
+                
+                # Break down into bytes (little-endian)
+                for i in range(size):
+                    byte_value = (value >> (i * 8)) & 0xFF
+                    byte_addr = base_addr + i
+                    
+                    # Create normalized single-byte event
+                    byte_annotations = {
+                        'addr': f"0x{byte_addr:06X}",
+                        'value': f"0x{byte_value:02X}"
+                    }
+                    
+                    # Copy other attributes
+                    if 'pc' in annotations:
+                        byte_annotations['pc'] = annotations['pc']
+                    
+                    normalized.append(MemoryEvent(
+                        name=event.name,
+                        timestamp=event.timestamp,
+                        annotations=byte_annotations
+                    ))
+            else:
+                # Single-byte event - just normalize attribute names
+                norm_annotations = {}
+                
+                # Normalize address attribute
+                if 'address' in annotations:
+                    norm_annotations['addr'] = annotations['address']
+                elif 'addr' in annotations:
+                    norm_annotations['addr'] = annotations['addr']
+                
+                # Copy value and pc
+                if 'value' in annotations:
+                    norm_annotations['value'] = annotations['value']
+                if 'pc' in annotations:
+                    norm_annotations['pc'] = annotations['pc']
+                
+                normalized.append(MemoryEvent(
+                    name=event.name,
+                    timestamp=event.timestamp,
+                    annotations=norm_annotations
+                ))
+        
+        return normalized
+    
     def compare_events(self) -> Iterator[Tuple[int, Optional[ExecutionEvent], Optional[ExecutionEvent], Optional[str]]]:
         """
         Compare events from both traces, yielding differences.
@@ -190,7 +458,64 @@ class PerfettoTraceComparator:
                 yield (i, event1, event2, "Annotation mismatch")
                 return
     
-    def run_comparison(self, verbose: bool = False) -> bool:
+    def compare_memory_events(self, event_list1: List[MemoryEvent], event_list2: List[MemoryEvent], 
+                            memory_type: str = "Memory") -> Iterator[Tuple[int, Optional[MemoryEvent], Optional[MemoryEvent], Optional[str]]]:
+        """
+        Compare memory events from both traces.
+        
+        Args:
+            event_list1: Memory events from trace 1
+            event_list2: Memory events from trace 2
+            memory_type: Type of memory for error messages (e.g., "Memory_Internal", "Memory_External")
+        
+        Yields:
+            (index, event1, event2, error_message)
+        """
+        max_len = max(len(event_list1), len(event_list2))
+        
+        for i in range(max_len):
+            event1 = event_list1[i] if i < len(event_list1) else None
+            event2 = event_list2[i] if i < len(event_list2) else None
+            
+            # Check for length mismatch
+            if event1 is None:
+                yield (i, event1, event2, f"Trace 1 ended but Trace 2 has more {memory_type} events")
+                return
+            elif event2 is None:
+                yield (i, event1, event2, f"Trace 2 ended but Trace 1 has more {memory_type} events")
+                return
+            
+            # Get key attributes based on memory type
+            if memory_type == "Memory_Internal":
+                # Memory_Internal uses 'offset'
+                addr_key = 'offset'
+                addr1 = event1.annotations.get(addr_key, 'N/A')
+                addr2 = event2.annotations.get(addr_key, 'N/A')
+            else:
+                # Memory_External uses 'addr'
+                addr_key = 'addr'
+                addr1 = event1.annotations.get(addr_key, 'N/A')
+                addr2 = event2.annotations.get(addr_key, 'N/A')
+            
+            value1 = event1.annotations.get('value', 'N/A')
+            value2 = event2.annotations.get('value', 'N/A')
+            pc1 = event1.annotations.get('pc', 'N/A')
+            pc2 = event2.annotations.get('pc', 'N/A')
+            
+            # Check if key attributes match
+            if addr1 != addr2:
+                yield (i, event1, event2, f"{memory_type} {addr_key} mismatch: '{addr1}' vs '{addr2}'")
+                return
+            
+            if value1 != value2:
+                yield (i, event1, event2, f"{memory_type} value mismatch at {addr_key} {addr1}: '{value1}' vs '{value2}'")
+                return
+            
+            if pc1 != pc2:
+                yield (i, event1, event2, f"PC mismatch for {memory_type} write at {addr_key} {addr1}: '{pc1}' vs '{pc2}'")
+                return
+    
+    def run_comparison(self, verbose: bool = False, skip_memory: bool = False) -> bool:
         """
         Run the full comparison process.
         
@@ -207,9 +532,10 @@ class PerfettoTraceComparator:
         self.trace2_events = self.extract_execution_events(trace2)
         print(f"  Found {len(self.trace2_events)} Exec@ events")
         
-        print("\nComparing traces...")
+        print("\nComparing execution traces...")
         
-        # Compare events
+        # Compare execution events
+        execution_match = True
         for i, event1, event2, error in self.compare_events():
             if error:
                 print(f"\n❌ Difference found at event #{i}:")
@@ -247,21 +573,155 @@ class PerfettoTraceComparator:
                     for line in difflib.unified_diff(lines1, lines2, fromfile="Trace 1", tofile="Trace 2", lineterm=""):
                         print(f"   {line}")
                 
-                return False
+                execution_match = False
+                break
             
             if verbose and i % 1000 == 0:
                 print(f"  Compared {i} events...")
         
-        print(f"\n✅ Traces match! ({len(self.trace1_events)} events compared)")
-        return True
+        if execution_match:
+            print(f"\n✅ Execution traces match! ({len(self.trace1_events)} events compared)")
+        
+        # Compare memory events if requested (always run unless explicitly skipped)
+        if not skip_memory:
+            overall_memory_match = True
+            
+            # Compare Memory_Internal events
+            print("\nExtracting Memory_Internal events...")
+            trace1_memory_internal = self.extract_memory_internal_events(trace1)
+            print(f"  Trace 1: Found {len(trace1_memory_internal)} Memory_Internal events")
+            
+            trace2_memory_internal = self.extract_memory_internal_events(trace2)
+            print(f"  Trace 2: Found {len(trace2_memory_internal)} Memory_Internal events")
+            
+            if len(trace1_memory_internal) > 0 or len(trace2_memory_internal) > 0:
+                print("\nComparing Memory_Internal events...")
+                
+                memory_internal_match = True
+                for i, event1, event2, error in self.compare_memory_events(trace1_memory_internal, trace2_memory_internal, "Memory_Internal"):
+                    if error:
+                        print(f"\n❌ Memory_Internal difference found at event #{i}:")
+                        print(f"   Error: {error}")
+                        
+                        # Show context of previous memory writes
+                        print("\n   Previous memory writes:")
+                        context_size = min(5, i)
+                        for j in range(i - context_size, i + 1):
+                            if j >= 0 and j < len(trace1_memory_internal):
+                                offset1 = trace1_memory_internal[j].annotations.get('offset', 'N/A')
+                                value1 = trace1_memory_internal[j].annotations.get('value', 'N/A')
+                                pc1 = trace1_memory_internal[j].annotations.get('pc', 'N/A')
+                                
+                                offset2 = 'N/A'
+                                value2 = 'N/A'
+                                pc2 = 'N/A'
+                                if j < len(trace2_memory_internal):
+                                    offset2 = trace2_memory_internal[j].annotations.get('offset', 'N/A')
+                                    value2 = trace2_memory_internal[j].annotations.get('value', 'N/A')
+                                    pc2 = trace2_memory_internal[j].annotations.get('pc', 'N/A')
+                                
+                                marker = " -> " if j == i else "    "
+                                match = offset1 == offset2 and value1 == value2 and pc1 == pc2
+                                print(f"   {marker}Event #{j}: offset={offset1} value={value1} pc={pc1} {'✓' if match else '✗'}")
+                        
+                        if event1:
+                            print(f"\n   Trace 1 - {event1.name}:")
+                            print(f"   {event1.annotation_string()}")
+                        
+                        if event2:
+                            print(f"\n   Trace 2 - {event2.name}:")
+                            print(f"   {event2.annotation_string()}")
+                        
+                        memory_internal_match = False
+                        overall_memory_match = False
+                        break
+                    
+                    if verbose and i % 1000 == 0:
+                        print(f"  Compared {i} Memory_Internal events...")
+                
+                if memory_internal_match:
+                    print(f"\n✅ Memory_Internal traces match! ({len(trace1_memory_internal)} events compared)")
+            else:
+                print("\n  No Memory_Internal events to compare")
+            
+            # Compare Memory_External events
+            print("\nExtracting Memory_External events...")
+            trace1_memory_external_raw = self.extract_memory_external_events(trace1)
+            print(f"  Trace 1: Found {len(trace1_memory_external_raw)} Memory_External events (raw)")
+            
+            trace2_memory_external_raw = self.extract_memory_external_events(trace2)
+            print(f"  Trace 2: Found {len(trace2_memory_external_raw)} Memory_External events (raw)")
+            
+            if len(trace1_memory_external_raw) > 0 or len(trace2_memory_external_raw) > 0:
+                # Normalize multi-byte events into single-byte events
+                print("\nNormalizing Memory_External events...")
+                trace1_memory_external = self.normalize_memory_events(trace1_memory_external_raw)
+                trace2_memory_external = self.normalize_memory_events(trace2_memory_external_raw)
+                print(f"  Trace 1: {len(trace1_memory_external)} normalized events")
+                print(f"  Trace 2: {len(trace2_memory_external)} normalized events")
+                
+                print("\nComparing Memory_External events...")
+                
+                memory_external_match = True
+                for i, event1, event2, error in self.compare_memory_events(trace1_memory_external, trace2_memory_external, "Memory_External"):
+                    if error:
+                        print(f"\n❌ Memory_External difference found at event #{i}:")
+                        print(f"   Error: {error}")
+                        
+                        # Show context of previous memory writes
+                        print("\n   Previous memory writes:")
+                        context_size = min(5, i)
+                        for j in range(i - context_size, i + 1):
+                            if j >= 0 and j < len(trace1_memory_external):
+                                addr1 = trace1_memory_external[j].annotations.get('addr', 'N/A')
+                                value1 = trace1_memory_external[j].annotations.get('value', 'N/A')
+                                pc1 = trace1_memory_external[j].annotations.get('pc', 'N/A')
+                                
+                                addr2 = 'N/A'
+                                value2 = 'N/A'
+                                pc2 = 'N/A'
+                                if j < len(trace2_memory_external):
+                                    addr2 = trace2_memory_external[j].annotations.get('addr', 'N/A')
+                                    value2 = trace2_memory_external[j].annotations.get('value', 'N/A')
+                                    pc2 = trace2_memory_external[j].annotations.get('pc', 'N/A')
+                                
+                                marker = " -> " if j == i else "    "
+                                match = addr1 == addr2 and value1 == value2 and pc1 == pc2
+                                print(f"   {marker}Event #{j}: addr={addr1} value={value1} pc={pc1} {'✓' if match else '✗'}")
+                        
+                        if event1:
+                            print(f"\n   Trace 1 - {event1.name}:")
+                            print(f"   {event1.annotation_string()}")
+                        
+                        if event2:
+                            print(f"\n   Trace 2 - {event2.name}:")
+                            print(f"   {event2.annotation_string()}")
+                        
+                        memory_external_match = False
+                        overall_memory_match = False
+                        break
+                    
+                    if verbose and i % 1000 == 0:
+                        print(f"  Compared {i} Memory_External events...")
+                
+                if memory_external_match:
+                    print(f"\n✅ Memory_External traces match! ({len(trace1_memory_external)} events compared)")
+            else:
+                print("\n  No Memory_External events to compare")
+            
+            return execution_match and overall_memory_match
+        else:
+            # Memory comparison was skipped
+            return execution_match
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare two Perfetto traces for execution differences"
+        description="Compare two Perfetto traces for execution and memory differences"
     )
     parser.add_argument("trace1", type=Path, help="First Perfetto trace file")
     parser.add_argument("trace2", type=Path, help="Second Perfetto trace file")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show progress during comparison")
+    parser.add_argument("--skip-memory", action="store_true", help="Skip memory event comparison")
     
     args = parser.parse_args()
     
@@ -278,7 +738,7 @@ def main():
     comparator = PerfettoTraceComparator(args.trace1, args.trace2)
     
     try:
-        matches = comparator.run_comparison(args.verbose)
+        matches = comparator.run_comparison(args.verbose, args.skip_memory)
         sys.exit(0 if matches else 1)
     except Exception as e:
         print(f"\nError during comparison: {e}")
