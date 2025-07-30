@@ -367,7 +367,8 @@ class PerfettoTraceComparator:
             if 'size' in annotations and int(annotations.get('size', '1')) > 1:
                 # Multi-byte event - break it down
                 size = int(annotations['size'])
-                base_addr = annotations.get('address', annotations.get('addr', '0x0'))
+                # Handle both 'offset' (Memory_Internal) and 'addr'/'address' (Memory_External)
+                base_addr = annotations.get('offset', annotations.get('address', annotations.get('addr', '0x0')))
                 if base_addr.startswith('0x'):
                     base_addr = int(base_addr, 16)
                 else:
@@ -386,8 +387,10 @@ class PerfettoTraceComparator:
                     byte_addr = base_addr + i
                     
                     # Create normalized single-byte event
+                    # Use appropriate key based on event type
+                    addr_key = 'offset' if 'offset' in annotations else 'addr'
                     byte_annotations = {
-                        'addr': f"0x{byte_addr:06X}",
+                        addr_key: f"0x{byte_addr:02X}" if addr_key == 'offset' else f"0x{byte_addr:06X}",
                         'value': f"0x{byte_value:02X}"
                     }
                     
@@ -404,8 +407,10 @@ class PerfettoTraceComparator:
                 # Single-byte event - just normalize attribute names
                 norm_annotations = {}
                 
-                # Normalize address attribute
-                if 'address' in annotations:
+                # Handle both Memory_Internal (offset) and Memory_External (addr/address)
+                if 'offset' in annotations:
+                    norm_annotations['offset'] = annotations['offset']
+                elif 'address' in annotations:
                     norm_annotations['addr'] = annotations['address']
                 elif 'addr' in annotations:
                     norm_annotations['addr'] = annotations['addr']
@@ -595,6 +600,13 @@ class PerfettoTraceComparator:
             print(f"  Trace 2: Found {len(trace2_memory_internal)} Memory_Internal events")
             
             if len(trace1_memory_internal) > 0 or len(trace2_memory_internal) > 0:
+                # Normalize multi-byte events into single-byte events
+                print("\nNormalizing Memory_Internal events...")
+                trace1_memory_internal = self.normalize_memory_events(trace1_memory_internal)
+                trace2_memory_internal = self.normalize_memory_events(trace2_memory_internal)
+                print(f"  Trace 1: {len(trace1_memory_internal)} normalized events")
+                print(f"  Trace 2: {len(trace2_memory_internal)} normalized events")
+                
                 print("\nComparing Memory_Internal events...")
                 
                 memory_internal_match = True
