@@ -93,13 +93,8 @@ jobs:
         # Check if directory exists first
         if [ -d "include" ]; then
           # Find .hpp files and run clang-tidy on them
-          hpp_files=$(find include -name '*.hpp')
-          if [ -n "$hpp_files" ]; then
-            echo "Running clang-tidy on C++ header files..."
-            echo "$hpp_files" | xargs clang-tidy -checks='-*,bugprone-*,cert-*,clang-analyzer-*,modernize-*,performance-*,portability-*,readability-*' -- -std=c++17 -I/usr/include
-          else
-            echo "No .hpp files found in include"
-          fi
+          echo "Running clang-tidy on C++ header files..."
+          find include -name '*.hpp' -print0 | xargs -0 clang-tidy -checks='-*,bugprone-*,cert-*,clang-analyzer-*,modernize-*,performance-*,portability-*,readability-*' -- -std=c++17 -I/usr/include -Iinclude
         else
           echo "Directory include not found"
           exit 1
