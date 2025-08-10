@@ -14,8 +14,8 @@ defaults:
     working-directory: py
 
 jobs:
-  pylint:
-    name: Pylint
+  ruff:
+    name: Ruff Lint
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -26,11 +26,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pylint
+        pip install ruff
         pip install -e ".[dev]"
-    - name: Run Pylint
+    - name: Run Ruff
       run: |
-        pylint $(find . -name '*.py' -not -path './build/*' -not -path './.pytest_cache/*')
+        ruff check .
 
   mypy:
     name: Type Check (MyPy)
@@ -162,11 +162,11 @@ jobs:
     name: Summary
     runs-on: ubuntu-latest
     if: always()
-    needs: [pylint, mypy, unit-tests, example-test, build, proto-compilation]
+    needs: [ruff, mypy, unit-tests, example-test, build, proto-compilation]
     steps:
     - name: Check job statuses
       run: |
-        if [[ "${{ needs.pylint.result }}" == "failure" || \
+        if [[ "${{ needs.ruff.result }}" == "failure" || \
               "${{ needs.mypy.result }}" == "failure" || \
               "${{ needs.unit-tests.result }}" == "failure" || \
               "${{ needs.example-test.result }}" == "failure" || \

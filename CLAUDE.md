@@ -31,7 +31,7 @@ pytest
 pytest --cov=retrobus_perfetto --cov-report=xml --cov-report=term
 
 # Run linter
-pylint $(git ls-files '*.py' | grep "^py/")
+ruff check py/
 
 # Run type checker (uses mypy.ini for configuration)
 mypy retrobus_perfetto --config-file mypy.ini
@@ -138,7 +138,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 - The library is CPU-independent - no assumptions about specific architectures
 - Direct protobuf usage for maximum control (future may migrate to official SDK)
 - Generated traces viewable at ui.perfetto.dev
-- Python CI pipeline includes: pylint, mypy, pytest with coverage, example testing, and package building
+- Python CI pipeline includes: ruff, mypy, pytest with coverage, example testing, and package building
 - Tests run on Python 3.8, 3.9, 3.10, 3.11, and 3.12
 - Type checking configured to handle dynamic protobuf imports (see py/mypy.ini)
 - Package is PEP 561 compliant with type stubs for generated protobuf code

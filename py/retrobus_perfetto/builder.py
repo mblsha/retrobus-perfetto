@@ -12,7 +12,7 @@ except ImportError:
 from .annotations import TrackEventWrapper
 
 
-# Type stubs for pylint when perfetto is not available
+# Type stubs for type checking when perfetto is not available
 if not perfetto:
     class _MockPerfetto:
         """Mock perfetto module for type checking."""
@@ -235,7 +235,7 @@ class PerfettoTraceBuilder:
         packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
 
     def add_flow(self, track_uuid: int, name: str, timestamp: int,
-                 flow_id: int, terminating: bool = False) -> TrackEventWrapper:  # pylint: disable=R0917
+                 flow_id: int, terminating: bool = False) -> TrackEventWrapper:
         """
         Add a flow event to connect events across tracks.
 

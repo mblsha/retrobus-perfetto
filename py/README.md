@@ -23,7 +23,7 @@ pytest
 
 ### Running Linter
 ```bash
-pylint $(git ls-files '*.py' | grep "^py/")
+ruff check .
 ```
 
 ### Running Type Checker

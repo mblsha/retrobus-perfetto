@@ -1,5 +1,5 @@
 """Basic functional tests for PerfettoTraceBuilder."""
-# pylint: disable=W0621  # redefined-outer-name is expected for pytest fixtures
+# ruff: noqa: F811  # redefined-outer-name is expected for pytest fixtures
 
 import pytest
 from retrobus_perfetto import PerfettoTraceBuilder
