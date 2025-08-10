@@ -1,5 +1,5 @@
 # Type stubs for generated perfetto_pb2 module
-from typing import Any, Optional, List, Iterator
+from typing import Optional
 from google.protobuf import message
 from google.protobuf.internal.containers import RepeatedCompositeFieldContainer, RepeatedScalarFieldContainer
 

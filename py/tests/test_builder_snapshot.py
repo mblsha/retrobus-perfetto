@@ -1,6 +1,5 @@
 """Snapshot tests for PerfettoTraceBuilder using real protobuf."""
 
-import pytest
 from google.protobuf import text_format
 from retrobus_perfetto.proto import perfetto_pb2
 from retrobus_perfetto import PerfettoTraceBuilder
@@ -36,7 +35,7 @@ class TestBuilderSnapshots:
     def test_single_thread(self):
         """Test trace with a single thread."""
         builder = PerfettoTraceBuilder("TestProcess")
-        thread = builder.add_thread("TestThread")
+        builder.add_thread("TestThread")
         
         expected = """packet {
   track_descriptor {

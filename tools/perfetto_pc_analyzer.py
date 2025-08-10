@@ -13,8 +13,7 @@ Usage:
 import struct
 import argparse
 import subprocess
-import json
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 
@@ -99,7 +98,7 @@ class PerfettoPCAnalyzer:
         """Analyze performance hotspots"""
         total = sum(mapped_addresses.values())
         
-        print(f"\nPerformance Analysis")
+        print("\nPerformance Analysis")
         print("=" * 60)
         print(f"Total instructions executed: {total:,}")
         print(f"Unique addresses: {len(mapped_addresses):,}")
@@ -134,12 +133,12 @@ class PerfettoPCAnalyzer:
                 cmd = f"""
 func = bv.get_function_at(0x{addr:x})
 if func:
-    print(f'FUNC:{func.name}')
+    print(f'FUNC:{{func.name}}')
 else:
     containing = bv.get_functions_containing(0x{addr:x})
     if containing:
         f = containing[0]
-        print(f'CONTAINS:{f.name}:0x{addr - f.start:x}')
+        print(f'CONTAINS:{{f.name}}:0x{{addr - f.start:x}}')
     else:
         print('NONE')
 """
@@ -181,18 +180,18 @@ else:
             output_file = self.trace_file.with_suffix('.analysis.txt')
         
         mapped = self.map_addresses_to_regions()
-        hotspots = self.analyze_hotspots(mapped)
+        self.analyze_hotspots(mapped)
         
         with open(output_file, 'w') as f:
-            f.write(f"Perfetto PC Analysis Report\n")
+            f.write("Perfetto PC Analysis Report\n")
             f.write(f"Trace file: {self.trace_file}\n")
             f.write(f"{'=' * 60}\n\n")
             
-            f.write(f"Summary:\n")
+            f.write("Summary:\n")
             f.write(f"  Total PC values: {sum(self.pc_counter.values()):,}\n")
             f.write(f"  Unique addresses: {len(mapped):,}\n\n")
             
-            f.write(f"Top 100 Addresses by Execution Count:\n")
+            f.write("Top 100 Addresses by Execution Count:\n")
             f.write(f"{'-' * 60}\n")
             
             for addr, count in mapped.most_common(100):

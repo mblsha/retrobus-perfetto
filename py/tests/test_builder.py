@@ -277,9 +277,9 @@ def test_pointer_annotation_heuristic():
 def test_get_all_tracks(trace_builder):
     """Test getting all tracks."""
     # Add various tracks
-    thread1 = trace_builder.add_thread("Thread 1")
-    thread2 = trace_builder.add_thread("Thread 2")
-    counter = trace_builder.add_counter_track("CPU", "%")
+    trace_builder.add_thread("Thread 1")
+    trace_builder.add_thread("Thread 2")
+    trace_builder.add_counter_track("CPU", "%")
     
     tracks = trace_builder.get_all_tracks()
     

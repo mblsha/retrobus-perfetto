@@ -13,8 +13,7 @@ Usage:
 
 import struct
 import argparse
-import re
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 
@@ -146,7 +145,7 @@ class PerfettoTraceParser:
                     pos = new_pos
                 else:
                     pos += 1
-            except:
+            except (IndexError, ValueError):
                 pos += 1
         
         return field_numbers, field_types
@@ -189,7 +188,7 @@ def main():
     
     # Create parser and load trace
     parser = PerfettoTraceParser(args.trace_file)
-    size = parser.load()
+    parser.load()
     
     # Execute requested operations
     if args.dump_strings:

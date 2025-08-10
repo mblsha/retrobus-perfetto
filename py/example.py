@@ -11,7 +11,7 @@ sys.path.insert(0, script_dir)
 # Since protobuf is generated, import it first
 sys.path.insert(0, os.path.join(script_dir, 'retrobus_perfetto', 'proto'))
 
-from retrobus_perfetto import PerfettoTraceBuilder  # pylint: disable=C0413
+from retrobus_perfetto import PerfettoTraceBuilder  # pylint: disable=C0413  # noqa: E402
 
 
 def main():
