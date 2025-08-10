@@ -90,38 +90,29 @@ jobs:
 
     - name: Run clang-tidy
       run: |
-        # Debug: Show current directory and structure
-        echo "Current working directory: $(pwd)"
-        echo "Directory listing:"
-        ls -la
-        echo "Looking for cpp directory:"
-        ls -la cpp/ || echo "cpp/ directory not found"
-        
         # Check if directory exists first
-        if [ -d "cpp/include" ]; then
+        if [ -d "include" ]; then
           # Find .hpp files and run clang-tidy on them
-          hpp_files=$(find cpp/include -name '*.hpp')
+          hpp_files=$(find include -name '*.hpp')
           if [ -n "$hpp_files" ]; then
             echo "Running clang-tidy on C++ header files..."
             echo "$hpp_files" | xargs clang-tidy -checks='-*,bugprone-*,cert-*,clang-analyzer-*,modernize-*,performance-*,portability-*,readability-*' -- -std=c++17 -I/usr/include
           else
-            echo "No .hpp files found in cpp/include"
+            echo "No .hpp files found in include"
           fi
         else
-          echo "Directory cpp/include not found"
-          echo "Available directories:"
-          find . -type d -name include 2>/dev/null || echo "No include directories found"
+          echo "Directory include not found"
           exit 1
         fi
 
     - name: Run cppcheck
       run: |
         # Check if directory exists first
-        if [ -d "cpp/include" ]; then
+        if [ -d "include" ]; then
           echo "Running cppcheck on C++ header files..."
-          cppcheck --enable=all --std=c++17 --suppress=missingIncludeSystem cpp/include/
+          cppcheck --enable=all --std=c++17 --suppress=missingIncludeSystem include/
         else
-          echo "Directory cpp/include not found"
+          echo "Directory include not found"
           exit 1
         fi
 
