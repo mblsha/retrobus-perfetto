@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -30,10 +31,13 @@ class AnnotationBuilder;
 
 // Utility functions
 namespace detail {
+    // Default values for trace generation
+    constexpr uint64_t DEFAULT_THREAD_TID = 1000;
+    constexpr int32_t DEFAULT_PROCESS_PID = 1234;
     // Pointer heuristic detection
     inline bool is_pointer_key(std::string_view key) {
         // Check suffixes (C++17 compatible)
-        const std::string_view suffixes[] = {"_addr", "_address", "_pc", "_sp", "_pointer"};
+        const std::array<std::string_view, 5> suffixes = {"_addr", "_address", "_pc", "_sp", "_pointer"};
         for (const auto& suffix : suffixes) {
             if (key.size() >= suffix.size() && 
                 key.substr(key.size() - suffix.size()) == suffix) {
@@ -51,7 +55,7 @@ class PerfettoTraceBuilder {
 private:
     std::unique_ptr<perfetto::protos::Trace> trace_;
     std::atomic<uint64_t> last_track_uuid_{0};
-    std::atomic<uint64_t> last_thread_tid_{1000};
+    std::atomic<uint64_t> last_thread_tid_{detail::DEFAULT_THREAD_TID};
     uint64_t process_uuid_;
     int32_t pid_;
     uint32_t trusted_packet_sequence_id_{1};
@@ -66,7 +70,7 @@ private:
     }
     
 public:
-    explicit PerfettoTraceBuilder(std::string_view process_name, int32_t pid = 1234)
+    explicit PerfettoTraceBuilder(std::string_view process_name, int32_t pid = detail::DEFAULT_PROCESS_PID)
         : trace_(std::make_unique<perfetto::protos::Trace>())
         , process_uuid_(++last_track_uuid_)
         , pid_(pid) {

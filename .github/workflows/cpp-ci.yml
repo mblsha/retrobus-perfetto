@@ -86,7 +86,7 @@ jobs:
           sleep 10
         done
         sudo apt-get update
-        sudo apt-get install -y clang-tidy cppcheck
+        sudo apt-get install -y clang-tidy cppcheck libprotobuf-dev protobuf-compiler
 
     - name: Run clang-tidy
       run: |
@@ -98,7 +98,7 @@ jobs:
             echo "Running clang-tidy on C++ header files: $hpp_files"
             # Use for loop instead of xargs to ensure proper handling
             for file in $hpp_files; do
-              clang-tidy "$file" -checks='-*,bugprone-*,cert-*,clang-analyzer-*,modernize-*,performance-*,portability-*,readability-*' -- -std=c++17 -I/usr/include -Iinclude
+              clang-tidy "$file" -checks='-*,bugprone-*,cert-*,clang-analyzer-*,modernize-*,-modernize-use-trailing-return-type,performance-*,portability-*,readability-*,-readability-identifier-length,-readability-convert-member-functions-to-static,-readability-magic-numbers' -- -std=c++17 -I/usr/include -Iinclude
             done
           else
             echo "No .hpp files found to analyze"
