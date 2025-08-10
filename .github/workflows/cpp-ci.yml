@@ -123,10 +123,18 @@ jobs:
     - name: Run cppcheck
       working-directory: cpp
       run: |
+        # Debug: list current directory contents
+        echo "Current directory: $(pwd)"
+        echo "Directory contents:"
+        ls -la
+        
         # Check if directory exists first
         if [ -d "include" ]; then
           echo "Running cppcheck on C++ header files..."
-          cppcheck --enable=all --std=c++17 --suppress=missingIncludeSystem include/
+          echo "Include directory contents:"
+          ls -la include/
+          # Add include paths for protobuf headers
+          cppcheck --enable=all --std=c++17 --suppress=missingIncludeSystem -I/usr/include -Iinclude -Ibuild/proto include/
         else
           echo "Directory include not found"
           exit 1
