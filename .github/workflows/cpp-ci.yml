@@ -33,6 +33,11 @@ jobs:
     - name: Install dependencies (Ubuntu)
       if: startsWith(matrix.os, 'ubuntu')
       run: |
+        # Wait for any existing apt processes to finish
+        while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for other apt processes to finish..."
+          sleep 10
+        done
         sudo apt-get update
         sudo apt-get install -y cmake protobuf-compiler libprotobuf-dev libabsl-dev
 
@@ -75,6 +80,11 @@ jobs:
 
     - name: Install dependencies
       run: |
+        # Wait for any existing apt processes to finish
+        while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for other apt processes to finish..."
+          sleep 10
+        done
         sudo apt-get update
         sudo apt-get install -y clang-tidy cppcheck
 
