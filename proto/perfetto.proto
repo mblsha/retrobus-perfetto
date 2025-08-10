@@ -1,4 +1,5 @@
 syntax = "proto2";
+option cc_enable_arenas = false;
 package perfetto.protos;
 
 message DebugAnnotation {
