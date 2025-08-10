@@ -90,6 +90,13 @@ jobs:
 
     - name: Run clang-tidy
       run: |
+        # Debug: Show current directory and structure
+        echo "Current working directory: $(pwd)"
+        echo "Directory listing:"
+        ls -la
+        echo "Looking for cpp directory:"
+        ls -la cpp/ || echo "cpp/ directory not found"
+        
         # Check if directory exists first
         if [ -d "cpp/include" ]; then
           # Find .hpp files and run clang-tidy on them
@@ -102,6 +109,8 @@ jobs:
           fi
         else
           echo "Directory cpp/include not found"
+          echo "Available directories:"
+          find . -type d -name include 2>/dev/null || echo "No include directories found"
           exit 1
         fi
 
