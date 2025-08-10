@@ -66,8 +66,9 @@ target_link_libraries(perfetto_proto PUBLIC
 )
 
 # Link abseil if found
-if(absl_FOUND)
-    # Modern CMake config (macOS, some Linux)
+if(TARGET absl::log AND TARGET absl::log_internal_check_op AND TARGET absl::log_internal_message AND TARGET absl::strings)
+    # Modern CMake config (macOS, some Linux) - check if all targets actually exist
+    message(STATUS "Found all required absl targets, linking them")
     target_link_libraries(perfetto_proto PUBLIC
         absl::log
         absl::log_internal_check_op
@@ -76,13 +77,15 @@ if(absl_FOUND)
     )
 elseif(ABSL_FOUND)
     # pkg-config method (Ubuntu/Debian)
+    message(STATUS "Found absl via pkg-config, linking libraries: ${ABSL_LIBRARIES}")
     target_include_directories(perfetto_proto PUBLIC ${ABSL_INCLUDE_DIRS})
     target_link_libraries(perfetto_proto PUBLIC ${ABSL_LIBRARIES})
     target_compile_options(perfetto_proto PUBLIC ${ABSL_CFLAGS_OTHER})
 else()
     # Fallback: assume protobuf is already properly linked
     # This is common on systems where protobuf was built with abseil support
-    message(STATUS "absl not found via CMake or pkg-config, assuming protobuf handles abseil dependencies")
+    message(STATUS "Abseil not found via CMake or pkg-config - assuming protobuf handles abseil dependencies")
+    message(STATUS "absl_FOUND: ${absl_FOUND}, ABSL_FOUND: ${ABSL_FOUND}")
 endif()
 set_target_properties(perfetto_proto PROPERTIES
     POSITION_INDEPENDENT_CODE ON
