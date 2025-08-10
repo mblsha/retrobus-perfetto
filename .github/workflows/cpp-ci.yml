@@ -89,17 +89,17 @@ jobs:
         sudo apt-get install -y clang-tidy cppcheck libprotobuf-dev protobuf-compiler cmake
 
     - name: Generate protobuf files
+      working-directory: cpp
       run: |
-        cd cpp
         mkdir -p build
         cd build
         # Generate only the protobuf files, don't build everything
         cmake .. -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF
         # Only generate the proto files
         make perfetto_proto
-        cd ../..
 
     - name: Run clang-tidy
+      working-directory: cpp
       run: |
         # Check if directory exists first
         if [ -d "include" ]; then
@@ -121,6 +121,7 @@ jobs:
         fi
 
     - name: Run cppcheck
+      working-directory: cpp
       run: |
         # Check if directory exists first
         if [ -d "include" ]; then
