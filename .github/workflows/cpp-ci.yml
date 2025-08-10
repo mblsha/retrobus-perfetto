@@ -91,12 +91,10 @@ jobs:
     - name: Run clang-tidy
       run: |
         find cpp/include -name '*.hpp' -exec clang-tidy {} -checks='-*,bugprone-*,cert-*,clang-analyzer-*,modernize-*,performance-*,portability-*,readability-*' -- -std=c++17 -I/usr/include \;
-      continue-on-error: true  # Don't fail the build on warnings
 
     - name: Run cppcheck
       run: |
         cppcheck --enable=all --std=c++17 --suppress=missingIncludeSystem cpp/include/
-      continue-on-error: true  # Don't fail the build on warnings
 
   documentation:
     name: Check Documentation
