@@ -84,7 +84,7 @@ def main():
     flow_end.add_annotations({"key_code": 0x41})
 
     # Save the trace
-    output_file = "example.perfetto-trace"
+    output_file = "trace.perfetto-trace"
     builder.save(output_file)
     print(f"Trace saved to {output_file}")
     print("Open https://ui.perfetto.dev and load the file to view the trace")
