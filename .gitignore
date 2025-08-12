@@ -78,3 +78,9 @@ cpp/cmake-build-*/
 cpp/*.so
 cpp/*.dylib
 cpp/*.dll
+
+# Perfetto
+*.pb.cc
+*.pb.h
+*.pb.o
+
