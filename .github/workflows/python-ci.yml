@@ -19,67 +19,68 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
       with:
-        python-version: "3.12"
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install ruff
-        pip install -e ".[dev]"
+        uv sync --all-extras
     - name: Run Ruff
       run: |
-        ruff check .
+        uv run ruff check .
 
   mypy:
     name: Type Check (MyPy)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
       with:
-        python-version: "3.12"
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install mypy types-protobuf
-        pip install -e ".[dev]"
+        uv sync --all-extras
     - name: Run MyPy
       run: |
-        mypy retrobus_perfetto --config-file mypy.ini
+        uv run mypy retrobus_perfetto --config-file mypy.ini
 
   unit-tests:
     name: Unit Tests (Python 3.12)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
       with:
-        python-version: "3.12"
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y protobuf-compiler
     - name: Install Python dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
+        uv sync --all-extras
     - name: Generate protobuf files
       run: |
-        python -m grpc_tools.protoc \
+        uv run python -m grpc_tools.protoc \
           --proto_path=../proto \
           --python_out=retrobus_perfetto/proto \
           ../proto/perfetto.proto
     - name: Run tests with coverage
       run: |
-        pytest --cov=retrobus_perfetto --cov-report=xml --cov-report=term
+        uv run pytest --cov=retrobus_perfetto --cov-report=xml --cov-report=term
     - name: Upload coverage
       uses: codecov/codecov-action@v3
       with:
-        file: ./coverage.xml
+        file: py/coverage.xml
         fail_ci_if_error: false
 
   example-test:
@@ -87,84 +88,86 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
       with:
-        python-version: "3.12"
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y protobuf-compiler
     - name: Install package
       run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
+        uv sync --all-extras
     - name: Generate protobuf files
       run: |
-        python -m grpc_tools.protoc \
+        uv run python -m grpc_tools.protoc \
           --proto_path=../proto \
           --python_out=retrobus_perfetto/proto \
           ../proto/perfetto.proto
     - name: Run example
       run: |
-        python example.py
+        uv run python example.py
         # Verify the trace file was created
         test -f trace.perfetto-trace
     - name: Upload trace artifact
       uses: actions/upload-artifact@v4
       with:
         name: example-trace
-        path: trace.perfetto-trace
+        path: py/trace.perfetto-trace
 
   build:
     name: Build Package
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
       with:
-        python-version: "3.12"
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
     - name: Install build dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install build twine
-        pip install -e ".[dev]"
+        uv sync --all-extras
     - name: Build package
       run: |
-        python -m build
+        uv build
     - name: Check package
       run: |
-        twine check dist/*
+        uv run twine check dist/*
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: dist
-        path: dist/
+        path: py/dist/
 
   proto-compilation:
     name: Protobuf Compilation Test
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
       with:
-        python-version: "3.12"
+        enable-cache: true
+    - name: Set up Python
+      run: uv python install 3.12
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install grpcio-tools
+        uv pip install grpcio-tools
     - name: Compile protobuf manually
       run: |
-        python -m grpc_tools.protoc \
+        uv run python -m grpc_tools.protoc \
           --proto_path=../proto \
           --python_out=retrobus_perfetto/proto \
           ../proto/perfetto.proto
     - name: Verify generated file
       run: |
         test -f retrobus_perfetto/proto/perfetto_pb2.py
-        python -c "import retrobus_perfetto.proto.perfetto_pb2"
+        uv run python -c "import retrobus_perfetto.proto.perfetto_pb2"
 
   summary:
     name: Summary

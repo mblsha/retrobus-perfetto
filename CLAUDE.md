@@ -17,27 +17,47 @@ This is a multi-language project:
 ### Working Directory
 When working on Python code, operate from the `py/` directory.
 
+### Prerequisites
+Install uv (Python package manager):
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or using pip
+pip install uv
+```
+
 ### Key Commands
 ```bash
 cd py/
 
-# Install for development (includes protoc tools)
-pip install -e ".[dev]"
+# Install Python version and create virtual environment
+uv python install 3.12
+uv venv
+
+# Install for development (includes all extras)
+uv sync --all-extras
 
 # Run tests
-pytest
+uv run pytest
 
 # Run tests with coverage
-pytest --cov=retrobus_perfetto --cov-report=xml --cov-report=term
+uv run pytest --cov=retrobus_perfetto --cov-report=xml --cov-report=term
 
 # Run linter
-ruff check py/
+uv run ruff check .
 
 # Run type checker (uses mypy.ini for configuration)
-mypy retrobus_perfetto --config-file mypy.ini
+uv run mypy retrobus_perfetto --config-file mypy.ini
 
 # Build package
-python -m build
+uv build
+
+# Install a specific package
+uv pip install package-name
+
+# Run any Python script with dependencies
+uv run python script.py
 ```
 
 ### Building
@@ -48,7 +68,7 @@ The protobuf files are automatically compiled during installation. The build pro
 Manual compilation if needed:
 ```bash
 cd py/
-python -m grpc_tools.protoc --proto_path=../proto --python_out=retrobus_perfetto/proto ../proto/perfetto.proto
+uv run python -m grpc_tools.protoc --proto_path=../proto --python_out=retrobus_perfetto/proto ../proto/perfetto.proto
 ```
 
 ## Architecture
