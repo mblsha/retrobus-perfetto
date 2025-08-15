@@ -158,7 +158,7 @@ jobs:
     - name: Create virtual environment and install dependencies
       run: |
         uv venv
-        uv pip install grpcio-tools
+        uv pip install grpcio-tools protobuf
     - name: Compile protobuf manually
       run: |
         uv run python -m grpc_tools.protoc \
