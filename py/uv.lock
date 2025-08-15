@@ -1296,7 +1296,7 @@ wheels = [
 
 [[package]]
 name = "retrobus-perfetto"
-version = "0.1.0"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "protobuf" },
@@ -1324,7 +1324,7 @@ requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=0.10.0" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.48.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "protobuf", specifier = ">=3.20.0,<5.0.0" },
+    { name = "protobuf", specifier = ">=4.25.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
