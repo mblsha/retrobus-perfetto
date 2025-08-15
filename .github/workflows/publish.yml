@@ -18,6 +18,18 @@ jobs:
         with:
           python-version: '3.11'
       
+      - name: Install build dependencies
+        working-directory: py
+        run: uv pip install --system grpcio-tools
+      
+      - name: Generate protobuf files
+        working-directory: py
+        run: |
+          python -m grpc_tools.protoc \
+            --proto_path=../proto \
+            --python_out=retrobus_perfetto/proto \
+            ../proto/perfetto.proto
+      
       - name: Build package
         working-directory: py
         run: uv build
