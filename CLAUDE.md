@@ -77,6 +77,7 @@ uv run python -m grpc_tools.protoc --proto_path=../proto --python_out=retrobus_p
 - **PerfettoTraceBuilder** (py/retrobus_perfetto/builder.py): Main API class using builder pattern for trace construction
 - **Annotations** (py/retrobus_perfetto/annotations.py): Helper classes for structured metadata
 - **Proto files**: proto/perfetto.proto defines the trace format; generated files go to py/retrobus_perfetto/proto/
+- **Proto module access**: The package exports `retrobus_perfetto.proto` for direct access to protobuf definitions (e.g., `from retrobus_perfetto.proto import perfetto_pb2`)
 
 ### Key Design Patterns
 1. **Builder Pattern**: Fluent API for constructing traces

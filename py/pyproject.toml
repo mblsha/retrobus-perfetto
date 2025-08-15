@@ -46,8 +46,8 @@ dev = [
 "Source" = "https://github.com/yourusername/retrobus-perfetto"
 
 [tool.setuptools]
-packages = ["retrobus_perfetto"]
-package-data = {"retrobus_perfetto" = ["py.typed", "*.pyi"]}
+packages = ["retrobus_perfetto", "retrobus_perfetto.proto"]
+package-data = {"retrobus_perfetto" = ["py.typed", "*.pyi"], "retrobus_perfetto.proto" = ["*.py"]}
 
 [tool.setuptools.package-dir]
 retrobus_perfetto = "retrobus_perfetto"

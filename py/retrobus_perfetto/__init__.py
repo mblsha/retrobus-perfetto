@@ -11,5 +11,8 @@ to the official Perfetto Python SDK for better compatibility and features.
 from .builder import PerfettoTraceBuilder
 from .annotations import DebugAnnotationBuilder, TrackEventWrapper
 
+# Make proto module available for direct import
+from . import proto
+
 __version__ = "0.1.0"
-__all__ = ["PerfettoTraceBuilder", "DebugAnnotationBuilder", "TrackEventWrapper"]
+__all__ = ["PerfettoTraceBuilder", "DebugAnnotationBuilder", "TrackEventWrapper", "proto"]
