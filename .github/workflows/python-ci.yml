@@ -157,7 +157,7 @@ jobs:
       run: uv python install 3.12
     - name: Install dependencies
       run: |
-        uv pip install grpcio-tools
+        uv pip install --system grpcio-tools
     - name: Compile protobuf manually
       run: |
         uv run python -m grpc_tools.protoc \
