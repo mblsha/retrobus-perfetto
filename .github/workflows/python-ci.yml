@@ -155,9 +155,10 @@ jobs:
         enable-cache: true
     - name: Set up Python
       run: uv python install 3.12
-    - name: Install dependencies
+    - name: Create virtual environment and install dependencies
       run: |
-        uv pip install --system grpcio-tools
+        uv venv
+        uv pip install grpcio-tools
     - name: Compile protobuf manually
       run: |
         uv run python -m grpc_tools.protoc \
