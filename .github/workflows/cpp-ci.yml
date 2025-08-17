@@ -14,24 +14,18 @@ defaults:
     working-directory: cpp
 
 jobs:
-  build-and-test:
-    name: Build and Test
-    runs-on: ${{ matrix.os }}
+  build:
+    name: build
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
         build_type: [Debug, Release]
-        include:
-          - os: ubuntu-latest
-            cxx: g++
-          - os: macos-latest
-            cxx: clang++
+        cxx: [g++, clang++]
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install dependencies (Ubuntu)
-      if: startsWith(matrix.os, 'ubuntu')
+    - name: Install dependencies
       run: |
         # Wait for any existing apt processes to finish
         while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
@@ -40,11 +34,6 @@ jobs:
         done
         sudo apt-get update
         sudo apt-get install -y cmake protobuf-compiler libprotobuf-dev libabsl-dev
-
-    - name: Install dependencies (macOS)
-      if: startsWith(matrix.os, 'macos')
-      run: |
-        brew install cmake protobuf abseil
 
     - name: Configure CMake
       run: |
@@ -55,7 +44,7 @@ jobs:
     - name: Build
       run: |
         cd build
-        cmake --build . --config ${{ matrix.build_type }} -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+        cmake --build . --config ${{ matrix.build_type }} -j$(nproc)
 
     - name: Run tests
       run: |

@@ -14,8 +14,8 @@ defaults:
     working-directory: py
 
 jobs:
-  ruff:
-    name: Ruff Lint
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -32,8 +32,8 @@ jobs:
       run: |
         uv run ruff check .
 
-  mypy:
-    name: Type Check (MyPy)
+  type-check:
+    name: type-check
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -50,8 +50,8 @@ jobs:
       run: |
         uv run mypy retrobus_perfetto --config-file mypy.ini
 
-  unit-tests:
-    name: Unit Tests (Python 3.12)
+  test:
+    name: test
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -175,13 +175,13 @@ jobs:
     name: Summary
     runs-on: ubuntu-latest
     if: always()
-    needs: [ruff, mypy, unit-tests, example-test, build, proto-compilation]
+    needs: [lint, type-check, test, example-test, build, proto-compilation]
     steps:
     - name: Check job statuses
       run: |
-        if [[ "${{ needs.ruff.result }}" == "failure" || \
-              "${{ needs.mypy.result }}" == "failure" || \
-              "${{ needs.unit-tests.result }}" == "failure" || \
+        if [[ "${{ needs.lint.result }}" == "failure" || \
+              "${{ needs.type-check.result }}" == "failure" || \
+              "${{ needs.test.result }}" == "failure" || \
               "${{ needs.example-test.result }}" == "failure" || \
               "${{ needs.build.result }}" == "failure" || \
               "${{ needs.proto-compilation.result }}" == "failure" ]]; then
