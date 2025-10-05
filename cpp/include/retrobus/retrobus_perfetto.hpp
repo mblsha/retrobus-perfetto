@@ -66,9 +66,17 @@ private:
     std::unordered_map<uint64_t, std::string> track_names_;
     std::unordered_map<uint64_t, uint64_t> track_parents_;
     
-    // Helper to add a new packet
-    perfetto::protos::TracePacket* add_packet() {
-        return trace_->add_packet();
+    // Helpers to add new packets with consistent initialization
+    perfetto::protos::TracePacket* create_packet() {
+        auto* packet = trace_->add_packet();
+        packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+        return packet;
+    }
+
+    perfetto::protos::TracePacket* create_packet(uint64_t timestamp_ns) {
+        auto* packet = create_packet();
+        packet->set_timestamp(timestamp_ns);
+        return packet;
     }
     
 public:
@@ -78,8 +86,7 @@ public:
         , pid_(pid) {
         
         // Add process descriptor
-        auto* packet = add_packet();
-        packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+        auto* packet = create_packet();
         
         auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(process_uuid_);
@@ -106,8 +113,7 @@ public:
         uint64_t uuid = ++last_track_uuid_;
         uint64_t tid = ++last_thread_tid_;
         
-        auto* packet = add_packet();
-        packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+        auto* packet = create_packet();
         
         auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
@@ -128,8 +134,7 @@ public:
     [[nodiscard]] uint64_t add_counter_track(std::string_view name, std::string_view unit) {
         uint64_t uuid = ++last_track_uuid_;
         
-        auto* packet = add_packet();
-        packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+        auto* packet = create_packet();
         
         auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
@@ -153,9 +158,7 @@ public:
     [[nodiscard]] TrackEventWrapper begin_slice(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns);
     
     void end_slice(uint64_t track_uuid, uint64_t timestamp_ns) {
-        auto* packet = add_packet();
-        packet->set_timestamp(timestamp_ns);
-        packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+        auto* packet = create_packet(timestamp_ns);
         
         auto* event = packet->mutable_track_event();
         event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_END);
@@ -168,9 +171,7 @@ public:
                                               uint64_t flow_id, bool terminating = false);
     
     void update_counter(uint64_t track_uuid, double value, uint64_t timestamp_ns) {
-        auto* packet = add_packet();
-        packet->set_timestamp(timestamp_ns);
-        packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+        auto* packet = create_packet(timestamp_ns);
         
         auto* event = packet->mutable_track_event();
         event->set_type(perfetto::protos::TrackEvent::TYPE_COUNTER);
@@ -388,9 +389,7 @@ public:
 
 // Implementation of deferred methods
 inline TrackEventWrapper PerfettoTraceBuilder::begin_slice(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns) {
-    auto* packet = add_packet();
-    packet->set_timestamp(timestamp_ns);
-    packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+    auto* packet = create_packet(timestamp_ns);
     
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_BEGIN);
@@ -401,9 +400,7 @@ inline TrackEventWrapper PerfettoTraceBuilder::begin_slice(uint64_t track_uuid, 
 }
 
 inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns) {
-    auto* packet = add_packet();
-    packet->set_timestamp(timestamp_ns);
-    packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+    auto* packet = create_packet(timestamp_ns);
     
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
@@ -415,9 +412,7 @@ inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(uint64_t track_
 
 inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns,
                                                          uint64_t flow_id, bool terminating) {
-    auto* packet = add_packet();
-    packet->set_timestamp(timestamp_ns);
-    packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+    auto* packet = create_packet(timestamp_ns);
     
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
