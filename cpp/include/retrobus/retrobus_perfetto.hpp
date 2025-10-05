@@ -5,9 +5,11 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -174,12 +176,18 @@ public:
         event->set_type(perfetto::protos::TrackEvent::TYPE_COUNTER);
         event->set_track_uuid(track_uuid);
         
-        // Check if it's an integer value
-        if (value == static_cast<double>(static_cast<int64_t>(value))) {
-            event->set_counter_value(static_cast<int64_t>(value));
-        } else {
-            event->set_double_counter_value(value);
+        const double min_int64 = static_cast<double>(std::numeric_limits<int64_t>::min());
+        const double max_int64 = static_cast<double>(std::numeric_limits<int64_t>::max());
+
+        if (std::isfinite(value) && value >= min_int64 && value <= max_int64) {
+            const double truncated = std::trunc(value);
+            if (truncated == value) {
+                event->set_counter_value(static_cast<int64_t>(truncated));
+                return;
+            }
         }
+
+        event->set_double_counter_value(value);
     }
     
     // Serialization
