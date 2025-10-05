@@ -125,6 +125,23 @@ class PerfettoTraceBuilder:
 
         return track_uuid
 
+    def _add_track_event(
+        self,
+        track_uuid: int,
+        timestamp: int,
+        event_type: int,
+        name: Optional[str] = None,
+    ):
+        """Create a packet with a populated track event."""
+        packet = self.trace.packet.add()
+        packet.timestamp = timestamp
+        packet.track_event.type = event_type
+        packet.track_event.track_uuid = track_uuid
+        if name is not None:
+            packet.track_event.name = name
+        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+        return packet.track_event
+
     def begin_slice(self, track_uuid: int, name: str, timestamp: int) -> TrackEventWrapper:
         """
         Begin a duration slice event.
@@ -137,14 +154,14 @@ class PerfettoTraceBuilder:
         Returns:
             TrackEventWrapper for adding annotations
         """
-        packet = self.trace.packet.add()
-        packet.timestamp = timestamp
-        packet.track_event.type = perfetto.TrackEvent.TYPE_SLICE_BEGIN
-        packet.track_event.track_uuid = track_uuid
-        packet.track_event.name = name
-        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+        event = self._add_track_event(
+            track_uuid,
+            timestamp,
+            perfetto.TrackEvent.TYPE_SLICE_BEGIN,
+            name,
+        )
 
-        return TrackEventWrapper(packet.track_event)
+        return TrackEventWrapper(event)
 
     def end_slice(self, track_uuid: int, timestamp: int) -> None:
         """
@@ -154,11 +171,7 @@ class PerfettoTraceBuilder:
             track_uuid: Track containing the slice
             timestamp: Timestamp in nanoseconds
         """
-        packet = self.trace.packet.add()
-        packet.timestamp = timestamp
-        packet.track_event.type = perfetto.TrackEvent.TYPE_SLICE_END
-        packet.track_event.track_uuid = track_uuid
-        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+        self._add_track_event(track_uuid, timestamp, perfetto.TrackEvent.TYPE_SLICE_END)
 
     def add_instant_event(self, track_uuid: int, name: str, timestamp: int) -> TrackEventWrapper:
         """
@@ -172,14 +185,14 @@ class PerfettoTraceBuilder:
         Returns:
             TrackEventWrapper for adding annotations
         """
-        packet = self.trace.packet.add()
-        packet.timestamp = timestamp
-        packet.track_event.type = perfetto.TrackEvent.TYPE_INSTANT
-        packet.track_event.track_uuid = track_uuid
-        packet.track_event.name = name
-        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+        event = self._add_track_event(
+            track_uuid,
+            timestamp,
+            perfetto.TrackEvent.TYPE_INSTANT,
+            name,
+        )
 
-        return TrackEventWrapper(packet.track_event)
+        return TrackEventWrapper(event)
 
     def add_counter_track(self, name: str, unit: str = "",
                          parent_uuid: Optional[int] = None) -> int:
@@ -222,17 +235,16 @@ class PerfettoTraceBuilder:
             value: New counter value
             timestamp: Timestamp in nanoseconds
         """
-        packet = self.trace.packet.add()
-        packet.timestamp = timestamp
-        packet.track_event.type = perfetto.TrackEvent.TYPE_COUNTER
-        packet.track_event.track_uuid = track_uuid
+        event = self._add_track_event(
+            track_uuid,
+            timestamp,
+            perfetto.TrackEvent.TYPE_COUNTER,
+        )
 
         if isinstance(value, int):
-            packet.track_event.counter_value = value
+            event.counter_value = value
         else:
-            packet.track_event.double_counter_value = value
-
-        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+            event.double_counter_value = value
 
     def add_flow(self, track_uuid: int, name: str, timestamp: int,
                  flow_id: int, terminating: bool = False) -> TrackEventWrapper:
