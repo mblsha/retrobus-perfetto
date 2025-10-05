@@ -3,6 +3,31 @@
 from typing import Dict, Any
 
 
+_POINTER_SUFFIXES = ("_addr", "_address", "_pc", "_sp", "_pointer")
+
+
+def _is_pointer_field(name: str) -> bool:
+    """Return True if the annotation name is likely to represent a pointer."""
+    return name.lower().endswith(_POINTER_SUFFIXES)
+
+
+def _set_annotation_value(entry, name: str, value: Any) -> None:
+    """Populate a debug annotation entry with a value based on its type."""
+    if isinstance(value, bool):
+        entry.bool_value = value
+    elif isinstance(value, int):
+        if _is_pointer_field(name):
+            entry.pointer_value = value
+        else:
+            entry.int_value = value
+    elif isinstance(value, float):
+        entry.double_value = value
+    elif isinstance(value, str):
+        entry.string_value = value
+    else:
+        entry.string_value = str(value)
+
+
 class DebugAnnotationBuilder:
     """Builder for Perfetto debug annotations with type-safe value handling."""
 
@@ -54,17 +79,8 @@ class DebugAnnotationBuilder:
 
     def auto(self, name: str, value: Any) -> None:
         """Automatically detect type and add value."""
-        if isinstance(value, bool):
-            self.bool(name, value)
-        elif isinstance(value, int):
-            self.integer(name, value)
-        elif isinstance(value, float):
-            self.double(name, value)
-        elif isinstance(value, str):
-            self.string(name, value)
-        else:
-            # Default to string representation
-            self.string(name, str(value))
+        entry = self._create_entry(name)
+        _set_annotation_value(entry, name, value)
 
 
 class TrackEventWrapper:
@@ -109,17 +125,4 @@ class TrackEventWrapper:
         for key, value in data.items():
             ann = self.event.debug_annotations.add()
             ann.name = key
-
-            if isinstance(value, bool):
-                ann.bool_value = value
-            elif isinstance(value, int):
-                if key.endswith(('_addr', '_address', '_pc', '_sp', '_pointer')):
-                    ann.pointer_value = value
-                else:
-                    ann.int_value = value
-            elif isinstance(value, float):
-                ann.double_value = value
-            elif isinstance(value, str):
-                ann.string_value = value
-            else:
-                ann.string_value = str(value)
+            _set_annotation_value(ann, key, value)
