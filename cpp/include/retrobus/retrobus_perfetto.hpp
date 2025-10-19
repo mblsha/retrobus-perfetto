@@ -322,59 +322,99 @@ class AnnotationBuilder {
 private:
     perfetto::protos::DebugAnnotation* annotation_;
     perfetto::protos::DebugAnnotation::NestedValue* nested_;
-    
-public:
-    explicit AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation) 
-        : annotation_(annotation) {
-        nested_ = annotation_->mutable_nested_value();
-        nested_->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
+
+    static AnnotationBuilder for_nested(perfetto::protos::DebugAnnotation::NestedValue* nested) {
+        if (nested) {
+            nested->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
+        }
+        return AnnotationBuilder(nullptr, nested);
     }
-    
+
+    AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation,
+                      perfetto::protos::DebugAnnotation::NestedValue* nested)
+        : annotation_(annotation), nested_(nested) {}
+
+    perfetto::protos::DebugAnnotation* add_entry(std::string_view key) {
+        if (annotation_) {
+            auto* entry = annotation_->add_dict_entries();
+            entry->set_name(std::string(key));
+            return entry;
+        }
+        return nullptr;
+    }
+
+    perfetto::protos::DebugAnnotation::NestedValue* add_nested_entry(std::string_view key) {
+        if (nested_) {
+            nested_->add_dict_keys(std::string(key));
+            return nested_->add_dict_values();
+        }
+        return nullptr;
+    }
+
+public:
+    explicit AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation)
+        : AnnotationBuilder(annotation, nullptr) {}
+
     // Typed annotation methods
     AnnotationBuilder& integer(std::string_view key, int64_t value) {
-        nested_->add_dict_keys(std::string(key));
-        auto* nested_val = nested_->add_dict_values();
-        nested_val->set_int_value(value);
+        if (auto* entry = add_entry(key)) {
+            entry->set_int_value(value);
+        } else if (auto* nested_val = add_nested_entry(key)) {
+            nested_val->set_int_value(value);
+        }
         return *this;
     }
-    
+
     AnnotationBuilder& floating(std::string_view key, double value) {
-        nested_->add_dict_keys(std::string(key));
-        auto* nested_val = nested_->add_dict_values();
-        nested_val->set_double_value(value);
+        if (auto* entry = add_entry(key)) {
+            entry->set_double_value(value);
+        } else if (auto* nested_val = add_nested_entry(key)) {
+            nested_val->set_double_value(value);
+        }
         return *this;
     }
-    
+
     AnnotationBuilder& boolean(std::string_view key, bool value) {
-        nested_->add_dict_keys(std::string(key));
-        auto* nested_val = nested_->add_dict_values();
-        nested_val->set_bool_value(value);
+        if (auto* entry = add_entry(key)) {
+            entry->set_bool_value(value);
+        } else if (auto* nested_val = add_nested_entry(key)) {
+            nested_val->set_bool_value(value);
+        }
         return *this;
     }
-    
+
     AnnotationBuilder& string(std::string_view key, std::string_view value) {
-        nested_->add_dict_keys(std::string(key));
-        auto* nested_val = nested_->add_dict_values();
-        nested_val->set_string_value(std::string(value));
+        if (auto* entry = add_entry(key)) {
+            entry->set_string_value(std::string(value));
+        } else if (auto* nested_val = add_nested_entry(key)) {
+            nested_val->set_string_value(std::string(value));
+        }
         return *this;
     }
-    
+
     AnnotationBuilder& pointer(std::string_view key, uint64_t address) {
-        // Store pointers as formatted hex strings in nested values
-        std::ostringstream oss;
-        oss << "0x" << std::hex << address;
-        return string(key, oss.str());
+        if (auto* entry = add_entry(key)) {
+            entry->set_pointer_value(address);
+        } else if (auto* nested_val = add_nested_entry(key)) {
+            // NestedValue does not support pointer_value, fall back to hex string
+            std::ostringstream oss;
+            oss << "0x" << std::hex << address;
+            nested_val->set_string_value(oss.str());
+        }
+        return *this;
     }
-    
+
     // Nested annotations - creates another level
     [[nodiscard]] AnnotationBuilder nested(std::string_view key) {
-        nested_->add_dict_keys(std::string(key));
-        auto* nested_val = nested_->add_dict_values();
-        nested_val->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
-        
-        // For simplicity, we'll return a builder for the same annotation
-        // In a real implementation, we'd need to create a proper nested structure
-        return AnnotationBuilder(annotation_);
+        if (auto* entry = add_entry(key)) {
+            auto* nested_val = entry->mutable_nested_value();
+            return for_nested(nested_val);
+        }
+        if (auto* nested_val = add_nested_entry(key)) {
+            nested_val->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
+            return for_nested(nested_val);
+        }
+        return AnnotationBuilder(nullptr, nullptr);
     }
 };
 
