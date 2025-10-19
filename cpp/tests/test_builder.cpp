@@ -758,34 +758,34 @@ packet {
   trusted_packet_sequence_id: 1
   track_event {
     debug_annotations {
-      dict_entries {
-        name: "A"
-        int_value: 18
-      }
-      dict_entries {
-        name: "B"
-        int_value: 52
-      }
-      dict_entries {
-        name: "PC"
-        pointer_value: 4660
-      }
-      dict_entries {
-        name: "SP"
-        pointer_value: 32768
-      }
       name: "registers"
+      dict_entries {
+        int_value: 18
+        name: "A"
+      }
+      dict_entries {
+        int_value: 52
+        name: "B"
+      }
+      dict_entries {
+        pointer_value: 4660
+        name: "PC"
+      }
+      dict_entries {
+        pointer_value: 32768
+        name: "SP"
+      }
     }
     debug_annotations {
-      dict_entries {
-        name: "zero"
-        bool_value: true
-      }
-      dict_entries {
-        name: "carry"
-        bool_value: false
-      }
       name: "flags"
+      dict_entries {
+        bool_value: true
+        name: "zero"
+      }
+      dict_entries {
+        bool_value: false
+        name: "carry"
+      }
     }
     type: TYPE_SLICE_BEGIN
     track_uuid: 2
