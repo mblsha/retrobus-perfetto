@@ -758,38 +758,32 @@ packet {
   trusted_packet_sequence_id: 1
   track_event {
     debug_annotations {
-      nested_value {
-        nested_type: DICT
-        dict_keys: "A"
-        dict_keys: "B"
-        dict_keys: "PC"
-        dict_keys: "SP"
-        dict_values {
-          int_value: 18
-        }
-        dict_values {
-          int_value: 52
-        }
-        dict_values {
-          string_value: "0x1234"
-        }
-        dict_values {
-          string_value: "0x8000"
-        }
+      dict_entries {
+        name: "A"
+        int_value: 18
+      }
+      dict_entries {
+        name: "B"
+        int_value: 52
+      }
+      dict_entries {
+        name: "PC"
+        pointer_value: 4660
+      }
+      dict_entries {
+        name: "SP"
+        pointer_value: 32768
       }
       name: "registers"
     }
     debug_annotations {
-      nested_value {
-        nested_type: DICT
-        dict_keys: "zero"
-        dict_keys: "carry"
-        dict_values {
-          bool_value: true
-        }
-        dict_values {
-          bool_value: false
-        }
+      dict_entries {
+        name: "zero"
+        bool_value: true
+      }
+      dict_entries {
+        name: "carry"
+        bool_value: false
       }
       name: "flags"
     }
