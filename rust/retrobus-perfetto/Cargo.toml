@@ -1,0 +1,20 @@
+[package]
+name = "retrobus-perfetto"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal Perfetto trace builder for retrocomputer emulators (Rust API parity with retrobus-perfetto)"
+license = "MIT"
+repository = "https://github.com/yourusername/retrobus-perfetto"
+rust-version = "1.70"
+readme = "README.md"
+keywords = ["perfetto", "tracing", "retrobus", "profiling"]
+categories = ["development-tools::profiling", "embedded", "emulators"]
+
+[dependencies]
+anyhow = "1.0.90"
+perfetto-writer = "0.3.2"
+
+[dev-dependencies]
+perfetto_protos = "0.51.1"
+pretty_assertions = "1.4.0"
+protobuf = "3.7.2"
