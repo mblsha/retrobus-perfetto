@@ -3,6 +3,9 @@ name: Rust Clippy
 on:
   push:
     branches: [ main, master ]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-clippy.yml'
   pull_request:
     paths:
       - 'rust/**'
