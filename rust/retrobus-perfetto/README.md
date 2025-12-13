@@ -5,7 +5,7 @@ Thin, idiomatic Rust wrapper around [`perfetto-writer`](https://crates.io/crates
 ## Usage
 
 ```rust
-use retrobus_perfetto::{PerfettoTraceBuilder, AnnotationValue};
+use retrobus_perfetto::{AnnotationValue, PerfettoTraceBuilder};
 
 fn main() -> anyhow::Result<()> {
     let mut builder = PerfettoTraceBuilder::new("My Emulator");
@@ -40,3 +40,22 @@ cargo test      # runs unit tests
 ```
 
 The crate consumes the builder on `serialize`/`save`; create a new builder per trace. Timestamps are expressed in nanoseconds in the API and converted to microseconds for Perfetto.
+
+## Reentrant tracer handle
+
+When instrumentation can nest (e.g., CPU → memory hook → IRQ hook), use `ReentrantHandle<T>` for a global tracer without deadlocks:
+
+```rust
+use retrobus_perfetto::ReentrantHandle;
+
+struct MyTracer;
+impl MyTracer {
+    fn record(&mut self) {}
+}
+
+static TRACER: ReentrantHandle<Option<MyTracer>> = ReentrantHandle::new(None);
+
+fn record_something() {
+    TRACER.with_some(|tracer| tracer.record());
+}
+```

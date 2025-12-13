@@ -11,9 +11,20 @@ type PwEvent<'a> = perfetto_writer::EventBuilder<'a, Writer>;
 
 #[derive(Debug, Clone)]
 pub enum TrackKind {
-    Process { name: String, pid: i32 },
-    Thread { name: String, tid: i32, parent_uuid: TrackId },
-    Counter { name: String, unit: Option<String>, parent_uuid: TrackId },
+    Process {
+        name: String,
+        pid: i32,
+    },
+    Thread {
+        name: String,
+        tid: i32,
+        parent_uuid: TrackId,
+    },
+    Counter {
+        name: String,
+        unit: Option<String>,
+        parent_uuid: TrackId,
+    },
 }
 
 /// Thin wrapper that mirrors the Python/C++ builder API while leaning on `perfetto-writer`
@@ -426,11 +437,7 @@ mod tests {
 
         let bytes = builder.serialize().expect("serialize");
         let trace = parse_trace(&bytes);
-        let flow_count = trace
-            .packet
-            .iter()
-            .filter(|p| p.has_track_event())
-            .count();
+        let flow_count = trace.packet.iter().filter(|p| p.has_track_event()).count();
         assert_eq!(flow_count, 2);
     }
 }
