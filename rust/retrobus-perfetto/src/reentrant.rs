@@ -260,7 +260,7 @@ impl<'a, T> ReentrantGuard<'a, T> {
 impl<T> ReentrantGuard<'_, Option<T>> {
     /// Run `f` only when the inner value is `Some`.
     pub fn with_some<R>(&mut self, f: impl for<'b> FnOnce(&'b mut T) -> R) -> Option<R> {
-        self.with_mut(|opt| opt.as_mut().map(|value| f(value)))
+        self.with_mut(|opt| opt.as_mut().map(f))
     }
 }
 
@@ -368,7 +368,7 @@ mod tests {
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             guard.with_mut(|v| {
                 let mut nested = handle.enter();
-                let _ = nested.with_mut(|v2| *v2 = 1);
+                nested.with_mut(|v2| *v2 = 1);
                 *v = 2;
             });
         }));
