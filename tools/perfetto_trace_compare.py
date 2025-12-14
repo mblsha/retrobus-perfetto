@@ -19,6 +19,7 @@ import difflib
 # Import perfetto protobuf definitions
 sys.path.append(str(Path(__file__).parent.parent / "py"))
 from retrobus_perfetto.proto import perfetto_pb2
+from retrobus_perfetto import resolve_interned_trace
 
 class ExecutionEvent:
     """Represents a single execution event with its annotations"""
@@ -73,6 +74,7 @@ class PerfettoTraceComparator:
         trace = perfetto_pb2.Trace()
         with open(trace_path, 'rb') as f:
             trace.ParseFromString(f.read())
+        resolve_interned_trace(trace, inplace=True)
         return trace
     
     def extract_execution_events(self, trace: perfetto_pb2.Trace) -> List[ExecutionEvent]:

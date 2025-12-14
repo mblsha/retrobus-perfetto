@@ -50,6 +50,80 @@ namespace detail {
         // Check exact matches
         return key == "pc" || key == "sp" || key == "address";
     }
+
+    class InterningState {
+    public:
+        uint64_t intern_event_name(std::string_view name, perfetto::protos::TracePacket* packet) {
+            mark_incremental_state_needed(packet);
+
+            std::string key(name);
+            auto it = event_names_.find(key);
+            if (it != event_names_.end()) {
+                return it->second;
+            }
+
+            const uint64_t iid = next_event_name_iid_++;
+            event_names_.emplace(key, iid);
+
+            auto* entry = packet->mutable_interned_data()->add_event_names();
+            entry->set_iid(iid);
+            entry->set_name(key);
+            return iid;
+        }
+
+        uint64_t intern_debug_annotation_name(std::string_view name,
+                                             perfetto::protos::TracePacket* packet) {
+            mark_incremental_state_needed(packet);
+
+            std::string key(name);
+            auto it = debug_annotation_names_.find(key);
+            if (it != debug_annotation_names_.end()) {
+                return it->second;
+            }
+
+            const uint64_t iid = next_debug_annotation_name_iid_++;
+            debug_annotation_names_.emplace(key, iid);
+
+            auto* entry = packet->mutable_interned_data()->add_debug_annotation_names();
+            entry->set_iid(iid);
+            entry->set_name(key);
+            return iid;
+        }
+
+        uint64_t intern_debug_annotation_string_value(std::string_view value,
+                                                      perfetto::protos::TracePacket* packet) {
+            mark_incremental_state_needed(packet);
+
+            std::string key(value);
+            auto it = debug_annotation_string_values_.find(key);
+            if (it != debug_annotation_string_values_.end()) {
+                return it->second;
+            }
+
+            const uint64_t iid = next_debug_annotation_string_value_iid_++;
+            debug_annotation_string_values_.emplace(key, iid);
+
+            auto* entry = packet->mutable_interned_data()->add_debug_annotation_string_values();
+            entry->set_iid(iid);
+            entry->set_str(key);
+            return iid;
+        }
+
+    private:
+        void mark_incremental_state_needed(perfetto::protos::TracePacket* packet) {
+            uint32_t flags = packet->sequence_flags();
+            flags |= perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE;
+            packet->set_sequence_flags(flags);
+        }
+
+        std::unordered_map<std::string, uint64_t> event_names_;
+        std::unordered_map<std::string, uint64_t> debug_annotation_names_;
+        std::unordered_map<std::string, uint64_t> debug_annotation_string_values_;
+
+        uint64_t next_event_name_iid_{1};
+        uint64_t next_debug_annotation_name_iid_{1};
+        uint64_t next_debug_annotation_string_value_iid_{1};
+    };
 } // namespace detail
 
 // Main trace builder class
@@ -61,15 +135,23 @@ private:
     uint64_t process_uuid_;
     int32_t pid_;
     uint32_t trusted_packet_sequence_id_{1};
+    bool emitted_incremental_state_cleared_{false};
     
     // Metadata tracking
     std::unordered_map<uint64_t, std::string> track_names_;
     std::unordered_map<uint64_t, uint64_t> track_parents_;
+
+    detail::InterningState interning_state_;
     
     // Helpers to add new packets with consistent initialization
     perfetto::protos::TracePacket* create_packet() {
         auto* packet = trace_->add_packet();
         packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+        if (encoding_ == Encoding::Interned && !emitted_incremental_state_cleared_) {
+            packet->set_sequence_flags(packet->sequence_flags() |
+                                       perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED);
+            emitted_incremental_state_cleared_ = true;
+        }
         return packet;
     }
 
@@ -80,10 +162,19 @@ private:
     }
     
 public:
-    explicit PerfettoTraceBuilder(std::string_view process_name, int32_t pid = detail::DEFAULT_PROCESS_PID)
+    enum class Encoding {
+        Inline,
+        Interned,
+    };
+
+    explicit PerfettoTraceBuilder(
+        std::string_view process_name,
+        int32_t pid = detail::DEFAULT_PROCESS_PID,
+        Encoding encoding = Encoding::Inline)
         : trace_(std::make_unique<perfetto::protos::Trace>())
         , process_uuid_(++last_track_uuid_)
-        , pid_(pid) {
+        , pid_(pid)
+        , encoding_(encoding) {
         
         // Add process descriptor
         auto* packet = create_packet();
@@ -233,21 +324,33 @@ public:
         
         return result;
     }
+
+private:
+    Encoding encoding_{Encoding::Inline};
 };
 
 // Wrapper for track events to enable annotation chaining
 class TrackEventWrapper {
 private:
     friend class PerfettoTraceBuilder;
+    perfetto::protos::TracePacket* packet_;
     perfetto::protos::TrackEvent* event_;
+    detail::InterningState* interning_state_;
     
-    explicit TrackEventWrapper(perfetto::protos::TrackEvent* event) : event_(event) {}
+    explicit TrackEventWrapper(perfetto::protos::TracePacket* packet,
+                               perfetto::protos::TrackEvent* event,
+                               detail::InterningState* interning_state)
+        : packet_(packet), event_(event), interning_state_(interning_state) {}
     
 public:
     // Individual annotation methods
     TrackEventWrapper& add_annotation(std::string_view key, int64_t value) {
         auto* annotation = event_->add_debug_annotations();
-        annotation->set_name(std::string(key));
+        if (interning_state_) {
+            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
+        } else {
+            annotation->set_name(std::string(key));
+        }
         
         // Check if this should be a pointer based on key name
         if (detail::is_pointer_key(key)) {
@@ -261,7 +364,11 @@ public:
     
     TrackEventWrapper& add_annotation(std::string_view key, uint64_t value) {
         auto* annotation = event_->add_debug_annotations();
-        annotation->set_name(std::string(key));
+        if (interning_state_) {
+            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
+        } else {
+            annotation->set_name(std::string(key));
+        }
         annotation->set_pointer_value(value);
         return *this;
     }
@@ -272,22 +379,36 @@ public:
     
     TrackEventWrapper& add_annotation(std::string_view key, double value) {
         auto* annotation = event_->add_debug_annotations();
-        annotation->set_name(std::string(key));
+        if (interning_state_) {
+            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
+        } else {
+            annotation->set_name(std::string(key));
+        }
         annotation->set_double_value(value);
         return *this;
     }
     
     TrackEventWrapper& add_annotation(std::string_view key, bool value) {
         auto* annotation = event_->add_debug_annotations();
-        annotation->set_name(std::string(key));
+        if (interning_state_) {
+            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
+        } else {
+            annotation->set_name(std::string(key));
+        }
         annotation->set_bool_value(value);
         return *this;
     }
     
     TrackEventWrapper& add_annotation(std::string_view key, std::string_view value) {
         auto* annotation = event_->add_debug_annotations();
-        annotation->set_name(std::string(key));
-        annotation->set_string_value(std::string(value));
+        if (interning_state_) {
+            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
+            annotation->set_string_value_iid(
+                interning_state_->intern_debug_annotation_string_value(value, packet_));
+        } else {
+            annotation->set_name(std::string(key));
+            annotation->set_string_value(std::string(value));
+        }
         return *this;
     }
     
@@ -298,7 +419,11 @@ public:
     // Pointer annotation with automatic formatting
     TrackEventWrapper& add_pointer(std::string_view key, uint64_t address) {
         auto* annotation = event_->add_debug_annotations();
-        annotation->set_name(std::string(key));
+        if (interning_state_) {
+            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
+        } else {
+            annotation->set_name(std::string(key));
+        }
         annotation->set_pointer_value(address);
         return *this;
     }
@@ -329,24 +454,38 @@ private:
 // Builder for nested annotations
 class AnnotationBuilder {
 private:
+    friend class TrackEventWrapper;
     perfetto::protos::DebugAnnotation* annotation_;
     perfetto::protos::DebugAnnotation::NestedValue* nested_;
+    perfetto::protos::TracePacket* packet_;
+    detail::InterningState* interning_state_;
 
-    static AnnotationBuilder for_nested(perfetto::protos::DebugAnnotation::NestedValue* nested) {
+    static AnnotationBuilder for_nested(perfetto::protos::DebugAnnotation::NestedValue* nested,
+                                        perfetto::protos::TracePacket* packet,
+                                        detail::InterningState* interning_state) {
         if (nested) {
             nested->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
         }
-        return AnnotationBuilder(nullptr, nested);
+        return AnnotationBuilder(nullptr, nested, packet, interning_state);
     }
 
     AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation,
-                      perfetto::protos::DebugAnnotation::NestedValue* nested)
-        : annotation_(annotation), nested_(nested) {}
+                      perfetto::protos::DebugAnnotation::NestedValue* nested,
+                      perfetto::protos::TracePacket* packet,
+                      detail::InterningState* interning_state)
+        : annotation_(annotation)
+        , nested_(nested)
+        , packet_(packet)
+        , interning_state_(interning_state) {}
 
     perfetto::protos::DebugAnnotation* add_entry(std::string_view key) {
         if (annotation_) {
             auto* entry = annotation_->add_dict_entries();
-            entry->set_name(std::string(key));
+            if (interning_state_) {
+                entry->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
+            } else {
+                entry->set_name(std::string(key));
+            }
             return entry;
         }
         return nullptr;
@@ -362,7 +501,7 @@ private:
 
 public:
     explicit AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation)
-        : AnnotationBuilder(annotation, nullptr) {}
+        : AnnotationBuilder(annotation, nullptr, nullptr, nullptr) {}
 
     // Typed annotation methods
     AnnotationBuilder& integer(std::string_view key, int64_t value) {
@@ -394,7 +533,12 @@ public:
 
     AnnotationBuilder& string(std::string_view key, std::string_view value) {
         if (auto* entry = add_entry(key)) {
-            entry->set_string_value(std::string(value));
+            if (interning_state_) {
+                entry->set_string_value_iid(
+                    interning_state_->intern_debug_annotation_string_value(value, packet_));
+            } else {
+                entry->set_string_value(std::string(value));
+            }
         } else if (auto* nested_val = add_nested_entry(key)) {
             nested_val->set_string_value(std::string(value));
         }
@@ -417,13 +561,13 @@ public:
     [[nodiscard]] AnnotationBuilder nested(std::string_view key) {
         if (auto* entry = add_entry(key)) {
             auto* nested_val = entry->mutable_nested_value();
-            return for_nested(nested_val);
+            return for_nested(nested_val, packet_, interning_state_);
         }
         if (auto* nested_val = add_nested_entry(key)) {
             nested_val->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
-            return for_nested(nested_val);
+            return for_nested(nested_val, packet_, interning_state_);
         }
-        return AnnotationBuilder(nullptr, nullptr);
+        return AnnotationBuilder(nullptr, nullptr, nullptr, nullptr);
     }
 };
 
@@ -434,9 +578,13 @@ inline TrackEventWrapper PerfettoTraceBuilder::begin_slice(uint64_t track_uuid, 
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_BEGIN);
     event->set_track_uuid(track_uuid);
-    event->set_name(std::string(name));
+    if (encoding_ == Encoding::Interned) {
+        event->set_name_iid(interning_state_.intern_event_name(name, packet));
+    } else {
+        event->set_name(std::string(name));
+    }
     
-    return TrackEventWrapper(event);
+    return TrackEventWrapper(packet, event, encoding_ == Encoding::Interned ? &interning_state_ : nullptr);
 }
 
 inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns) {
@@ -445,9 +593,13 @@ inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(uint64_t track_
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
     event->set_track_uuid(track_uuid);
-    event->set_name(std::string(name));
+    if (encoding_ == Encoding::Interned) {
+        event->set_name_iid(interning_state_.intern_event_name(name, packet));
+    } else {
+        event->set_name(std::string(name));
+    }
     
-    return TrackEventWrapper(event);
+    return TrackEventWrapper(packet, event, encoding_ == Encoding::Interned ? &interning_state_ : nullptr);
 }
 
 inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns,
@@ -457,7 +609,11 @@ inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
     event->set_track_uuid(track_uuid);
-    event->set_name(std::string(name));
+    if (encoding_ == Encoding::Interned) {
+        event->set_name_iid(interning_state_.intern_event_name(name, packet));
+    } else {
+        event->set_name(std::string(name));
+    }
     
     if (terminating) {
         event->add_terminating_flow_ids(flow_id);
@@ -465,11 +621,15 @@ inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std
         event->add_flow_ids(flow_id);
     }
     
-    return TrackEventWrapper(event);
+    return TrackEventWrapper(packet, event, encoding_ == Encoding::Interned ? &interning_state_ : nullptr);
 }
 
 inline AnnotationBuilder TrackEventWrapper::annotation(std::string_view name) {
     auto* annotation = event_->add_debug_annotations();
+    if (interning_state_) {
+        annotation->set_name_iid(interning_state_->intern_debug_annotation_name(name, packet_));
+        return AnnotationBuilder(annotation, nullptr, packet_, interning_state_);
+    }
     annotation->set_name(std::string(name));
     return AnnotationBuilder(annotation);
 }

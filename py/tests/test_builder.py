@@ -292,3 +292,73 @@ def test_get_all_tracks(trace_builder):
     assert "Thread 1" in track_names
     assert "Thread 2" in track_names
     assert "CPU" in track_names
+
+
+def test_interned_encoding_emits_interned_data():
+    """Interned encoding emits dictionaries + uses *_iid fields."""
+    builder = PerfettoTraceBuilder("Test", encoding="interned")
+    thread = builder.add_thread("Test Thread")
+
+    event = builder.add_instant_event(thread, "test_event", 1500)
+    event.add_annotations({"arg_string": "hello", "arg_int": 42})
+
+    # Emit a second event reusing the same strings.
+    builder.add_instant_event(thread, "test_event", 1600)
+
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(builder.serialize())
+
+    first_packet = trace.packet[2]
+    assert first_packet.sequence_flags & perfetto_pb2.TracePacket.SEQ_NEEDS_INCREMENTAL_STATE
+    assert (
+        first_packet.sequence_flags
+        & perfetto_pb2.TracePacket.SEQ_INCREMENTAL_STATE_CLEARED
+    )
+    assert first_packet.track_event.HasField("name_iid")
+    assert not first_packet.track_event.HasField("name")
+
+    assert first_packet.HasField("interned_data")
+    assert len(first_packet.interned_data.event_names) == 1
+    assert first_packet.interned_data.event_names[0].name == "test_event"
+    assert first_packet.interned_data.event_names[0].iid == first_packet.track_event.name_iid
+
+    ann_names = {e.name: e.iid for e in first_packet.interned_data.debug_annotation_names}
+    assert set(ann_names) == {"arg_string", "arg_int"}
+
+    anns_by_iid = {
+        a.name_iid: a for a in first_packet.track_event.debug_annotations if a.HasField("name_iid")
+    }
+    assert anns_by_iid[ann_names["arg_int"]].int_value == 42
+
+    str_ann = anns_by_iid[ann_names["arg_string"]]
+    assert str_ann.HasField("string_value_iid")
+    str_values = {e.str: e.iid for e in first_packet.interned_data.debug_annotation_string_values}
+    assert str_values[b"hello"] == str_ann.string_value_iid
+
+    second_packet = trace.packet[3]
+    assert second_packet.sequence_flags & perfetto_pb2.TracePacket.SEQ_NEEDS_INCREMENTAL_STATE
+    assert (
+        second_packet.sequence_flags
+        & perfetto_pb2.TracePacket.SEQ_INCREMENTAL_STATE_CLEARED
+    ) == 0
+    assert second_packet.track_event.name_iid == first_packet.track_event.name_iid
+    assert not second_packet.HasField("interned_data")
+
+
+def test_resolve_interned_trace_restores_strings():
+    """resolve_interned_trace makes interned traces readable by string-based tooling."""
+    from retrobus_perfetto import resolve_interned_trace
+
+    builder = PerfettoTraceBuilder("Test", encoding="interned")
+    thread = builder.add_thread("Test Thread")
+    event = builder.add_instant_event(thread, "test_event", 1500)
+    event.add_annotations({"arg_string": "hello"})
+
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(builder.serialize())
+
+    resolved = resolve_interned_trace(trace, inplace=False)
+    packet = resolved.packet[2]
+    assert packet.track_event.name == "test_event"
+    assert packet.track_event.debug_annotations[0].name == "arg_string"
+    assert packet.track_event.debug_annotations[0].string_value == "hello"
