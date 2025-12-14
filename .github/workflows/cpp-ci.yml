@@ -59,6 +59,14 @@ jobs:
         # Check that trace files were created
         test -f example.perfetto-trace
         test -f z80_emulation.perfetto-trace
+    - name: Verify traces use interning
+      if: ${{ matrix.build_type == 'Release' && matrix.cxx == 'clang++' }}
+      run: |
+        cd build
+        for trace in example.perfetto-trace z80_emulation.perfetto-trace; do
+          protoc --decode=perfetto.protos.Trace ../../proto/perfetto.proto < "$trace" > /tmp/decoded_trace.txt
+          grep -q "interned_data" /tmp/decoded_trace.txt
+        done
     - name: Upload trace artifacts
       if: ${{ matrix.build_type == 'Release' && matrix.cxx == 'clang++' }}
       uses: actions/upload-artifact@v4
