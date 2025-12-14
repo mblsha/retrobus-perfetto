@@ -170,7 +170,7 @@ public:
     explicit PerfettoTraceBuilder(
         std::string_view process_name,
         int32_t pid = detail::DEFAULT_PROCESS_PID,
-        Encoding encoding = Encoding::Inline)
+        Encoding encoding = Encoding::Interned)
         : trace_(std::make_unique<perfetto::protos::Trace>())
         , process_uuid_(++last_track_uuid_)
         , pid_(pid)

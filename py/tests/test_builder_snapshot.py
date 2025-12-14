@@ -18,7 +18,7 @@ class TestBuilderSnapshots:
     
     def test_empty_trace(self):
         """Test empty trace with only process descriptor."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         
         expected = """packet {
   track_descriptor {
@@ -34,7 +34,7 @@ class TestBuilderSnapshots:
     
     def test_single_thread(self):
         """Test trace with a single thread."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         builder.add_thread("TestThread")
         
         expected = """packet {
@@ -62,7 +62,7 @@ packet {
     
     def test_basic_slice_event(self):
         """Test basic slice (duration) event."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         thread = builder.add_thread("TestThread")
         
         builder.begin_slice(thread, "test_function", 1000)
@@ -110,7 +110,7 @@ packet {
     
     def test_instant_event(self):
         """Test instant (point-in-time) event."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         thread = builder.add_thread("TestThread")
         
         builder.add_instant_event(thread, "checkpoint", 1500)
@@ -149,7 +149,7 @@ packet {
     
     def test_counter_track_and_updates(self):
         """Test counter track with value updates."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         counter = builder.add_counter_track("Memory", "MB")
         
         builder.update_counter(counter, 100, 1000)
@@ -194,7 +194,7 @@ packet {
     
     def test_slice_with_annotations(self):
         """Test slice event with various annotation types."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         thread = builder.add_thread("TestThread")
         
         event = builder.begin_slice(thread, "test_function", 1000)
@@ -270,7 +270,7 @@ packet {
     
     def test_flow_events(self):
         """Test flow events connecting different threads."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         thread1 = builder.add_thread("Producer")
         thread2 = builder.add_thread("Consumer")
         
@@ -335,7 +335,7 @@ packet {
     
     def test_nested_slices(self):
         """Test nested slice events."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         thread = builder.add_thread("TestThread")
         
         builder.begin_slice(thread, "outer_function", 1000)
@@ -402,7 +402,7 @@ packet {
     
     def test_structured_annotations(self):
         """Test structured annotations with nested groups."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         thread = builder.add_thread("TestThread")
         
         event = builder.begin_slice(thread, "cpu_instruction", 1000)
@@ -491,7 +491,7 @@ packet {
     
     def test_multiple_threads(self):
         """Test trace with multiple threads."""
-        builder = PerfettoTraceBuilder("TestProcess")
+        builder = PerfettoTraceBuilder("TestProcess", encoding="inline")
         
         threads = []
         for i in range(3):

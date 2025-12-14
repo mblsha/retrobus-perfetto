@@ -300,7 +300,7 @@ TEST_CASE("Thread safety", "[builder][thread-safety]") {
 
 TEST_CASE("Textproto snapshot validation", "[builder][snapshot]") {
     SECTION("Empty trace") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         
         const char* expected = R"proto(packet {
   trusted_packet_sequence_id: 1
@@ -319,7 +319,7 @@ TEST_CASE("Textproto snapshot validation", "[builder][snapshot]") {
     }
     
     SECTION("Single thread") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto thread = builder.add_thread("TestThread");
         
         const char* expected = R"proto(packet {
@@ -351,7 +351,7 @@ packet {
     }
     
     SECTION("Basic slice event") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto thread = builder.add_thread("TestThread");
         
         builder.begin_slice(thread, "test_function", 1000);
@@ -403,7 +403,7 @@ packet {
     }
     
     SECTION("Instant event") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto thread = builder.add_thread("TestThread");
         
         builder.add_instant_event(thread, "checkpoint", 1500);
@@ -446,7 +446,7 @@ packet {
     }
     
     SECTION("Counter track and updates") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto counter = builder.add_counter_track("Memory", "MB");
         
         builder.update_counter(counter, 100, 1000);
@@ -495,7 +495,7 @@ packet {
     }
     
     SECTION("Slice with annotations") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto thread = builder.add_thread("TestThread");
         
         auto event = builder.begin_slice(thread, "test_function", 1000);
@@ -573,7 +573,7 @@ packet {
     }
     
     SECTION("Flow events") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto thread1 = builder.add_thread("Producer");
         auto thread2 = builder.add_thread("Consumer");
         
@@ -643,7 +643,7 @@ packet {
     }
     
     SECTION("Nested slices") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto thread = builder.add_thread("TestThread");
         
         builder.begin_slice(thread, "outer_function", 1000);
@@ -714,7 +714,7 @@ packet {
     }
     
     SECTION("Structured annotations") {
-        PerfettoTraceBuilder builder("TestProcess", 1234);
+        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
         auto thread = builder.add_thread("TestThread");
         
         auto event = builder.begin_slice(thread, "cpu_instruction", 1000);
@@ -808,7 +808,7 @@ packet {
 	}
 
 TEST_CASE("Interned encoding", "[builder][interning]") {
-    PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Interned);
+    PerfettoTraceBuilder builder("TestProcess", 1234);
     auto thread = builder.add_thread("TestThread");
 
     auto event = builder.add_instant_event(thread, "test_event", 1500);

@@ -2,7 +2,7 @@
 # ruff: noqa: F811  # redefined-outer-name is expected for pytest fixtures
 
 import pytest
-from retrobus_perfetto import PerfettoTraceBuilder
+from retrobus_perfetto import PerfettoTraceBuilder, resolve_interned_trace
 from retrobus_perfetto.proto import perfetto_pb2
 
 
@@ -57,6 +57,7 @@ def test_slice_events(trace_builder):
     data = trace_builder.serialize()
     trace = perfetto_pb2.Trace()
     trace.ParseFromString(data)
+    resolve_interned_trace(trace, inplace=True)
     
     # Should have 3 packets: process, thread, slice begin, slice end
     assert len(trace.packet) == 4
@@ -86,6 +87,7 @@ def test_instant_events(trace_builder):
     data = trace_builder.serialize()
     trace = perfetto_pb2.Trace()
     trace.ParseFromString(data)
+    resolve_interned_trace(trace, inplace=True)
     
     # Find instant event packet
     instant_packet = trace.packet[2]
@@ -231,6 +233,7 @@ def test_annotation_type_detection():
     data = builder.serialize()
     trace = perfetto_pb2.Trace()
     trace.ParseFromString(data)
+    resolve_interned_trace(trace, inplace=True)
     
     annotations = trace.packet[2].track_event.debug_annotations
     
@@ -261,6 +264,7 @@ def test_pointer_annotation_heuristic():
     data = builder.serialize()
     trace = perfetto_pb2.Trace()
     trace.ParseFromString(data)
+    resolve_interned_trace(trace, inplace=True)
     
     annotations = trace.packet[2].track_event.debug_annotations
     ann_dict = {ann.name: ann for ann in annotations}
@@ -294,9 +298,9 @@ def test_get_all_tracks(trace_builder):
     assert "CPU" in track_names
 
 
-def test_interned_encoding_emits_interned_data():
-    """Interned encoding emits dictionaries + uses *_iid fields."""
-    builder = PerfettoTraceBuilder("Test", encoding="interned")
+def test_default_encoding_is_interned():
+    """Default encoding emits dictionaries + uses *_iid fields."""
+    builder = PerfettoTraceBuilder("Test")
     thread = builder.add_thread("Test Thread")
 
     event = builder.add_instant_event(thread, "test_event", 1500)
@@ -343,6 +347,25 @@ def test_interned_encoding_emits_interned_data():
     ) == 0
     assert second_packet.track_event.name_iid == first_packet.track_event.name_iid
     assert not second_packet.HasField("interned_data")
+
+def test_inline_encoding_uses_strings():
+    builder = PerfettoTraceBuilder("Test", encoding="inline")
+    thread = builder.add_thread("Test Thread")
+    event = builder.add_instant_event(thread, "test_event", 1500)
+    event.add_annotations({"arg_string": "hello", "arg_int": 42})
+
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(builder.serialize())
+
+    packet = trace.packet[2]
+    assert packet.track_event.HasField("name")
+    assert not packet.track_event.HasField("name_iid")
+    assert not packet.HasField("interned_data")
+
+    anns = packet.track_event.debug_annotations
+    assert {a.name for a in anns} == {"arg_string", "arg_int"}
+    assert any(a.HasField("string_value") and a.string_value == "hello" for a in anns)
+    assert any(a.HasField("int_value") and a.int_value == 42 for a in anns)
 
 
 def test_resolve_interned_trace_restores_strings():

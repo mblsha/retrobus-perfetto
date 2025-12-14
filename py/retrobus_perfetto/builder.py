@@ -36,13 +36,13 @@ class PerfettoTraceBuilder:
     making it easy to create traces for retrocomputer emulators and similar applications.
     """
 
-    def __init__(self, process_name: str, encoding: str = "inline"):
+    def __init__(self, process_name: str, encoding: str = "interned"):
         """
         Initialize a new trace builder.
 
         Args:
             process_name: Name of the process being traced
-            encoding: "inline" (default) or "interned"
+            encoding: "interned" (default) or "inline"
         """
         if perfetto is None:
             raise ImportError(
