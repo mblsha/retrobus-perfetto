@@ -59,6 +59,16 @@ jobs:
         # Check that trace files were created
         test -f example.perfetto-trace
         test -f z80_emulation.perfetto-trace
+    - name: Upload trace artifacts
+      if: ${{ matrix.build_type == 'Release' && matrix.cxx == 'clang++' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: cpp-interned-traces
+        path: |
+          cpp/build/example.perfetto-trace
+          cpp/build/z80_emulation.perfetto-trace
+        if-no-files-found: error
+        retention-days: 7
 
   static-analysis:
     name: Static Analysis
