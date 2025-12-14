@@ -66,13 +66,14 @@ builder.save("trace.perfetto-trace")
 
 ### Interned encoding (Python)
 
-Interning is opt-in and keeps your public API string-based:
+Interning is the default encoding and keeps your public API string-based (users still pass strings; traces store IDs + dictionaries). Opt out with `encoding="inline"`:
 
 ```python
 from retrobus_perfetto import PerfettoTraceBuilder, resolve_interned_trace
 from retrobus_perfetto.proto import perfetto_pb2
 
-builder = PerfettoTraceBuilder("My Emulator", encoding="interned")
+builder = PerfettoTraceBuilder("My Emulator")  # default: interned
+# builder = PerfettoTraceBuilder("My Emulator", encoding="inline")  # opt out
 # ... emit events ...
 
 # Optional: make interned traces readable for string-based tooling
@@ -86,10 +87,11 @@ resolved = resolve_interned_trace(trace, inplace=False)
 ```cpp
 #include <retrobus/retrobus_perfetto.hpp>
 
-retrobus::PerfettoTraceBuilder builder(
-    "My Emulator",
-    /*pid=*/1234,
-    retrobus::PerfettoTraceBuilder::Encoding::Interned);
+retrobus::PerfettoTraceBuilder builder("My Emulator");  // default: interned
+// retrobus::PerfettoTraceBuilder builder(
+//     "My Emulator",
+//     /*pid=*/1234,
+//     retrobus::PerfettoTraceBuilder::Encoding::Inline);  // opt out
 ```
 
 ## Documentation
