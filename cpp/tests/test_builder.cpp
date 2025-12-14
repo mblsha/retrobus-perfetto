@@ -2,6 +2,7 @@
 #include <retrobus/retrobus_perfetto.hpp>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 #include <google/protobuf/text_format.h>
 
 using namespace retrobus;
@@ -802,6 +803,70 @@ packet {
 }
 )proto";
         
-        REQUIRE(to_textproto(builder) == expected);
+	        REQUIRE(to_textproto(builder) == expected);
+	    }
+	}
+
+TEST_CASE("Interned encoding", "[builder][interning]") {
+    PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Interned);
+    auto thread = builder.add_thread("TestThread");
+
+    auto event = builder.add_instant_event(thread, "test_event", 1500);
+    event.add_annotation("arg_string", "hello")
+         .add_annotation("arg_int", 42);
+
+    builder.add_instant_event(thread, "test_event", 1600);
+
+    perfetto::protos::Trace trace;
+    auto data = builder.serialize();
+    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+
+    const auto& seq_start_packet = trace.packet(0);
+    REQUIRE((seq_start_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0);
+
+    const auto& first_packet = trace.packet(2);
+    REQUIRE((first_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0);
+    REQUIRE((first_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) == 0);
+
+    REQUIRE(first_packet.has_track_event());
+    REQUIRE(first_packet.track_event().has_name_iid());
+    REQUIRE(!first_packet.track_event().has_name());
+
+    REQUIRE(first_packet.has_interned_data());
+    REQUIRE(first_packet.interned_data().event_names_size() == 1);
+    REQUIRE(first_packet.interned_data().event_names(0).name() == "test_event");
+    REQUIRE(first_packet.interned_data().event_names(0).iid() == first_packet.track_event().name_iid());
+
+    std::unordered_map<std::string, uint64_t> ann_name_iids;
+    for (const auto& entry : first_packet.interned_data().debug_annotation_names()) {
+        ann_name_iids[entry.name()] = entry.iid();
     }
+    REQUIRE(ann_name_iids.size() == 2);
+    REQUIRE(ann_name_iids.count("arg_string") == 1);
+    REQUIRE(ann_name_iids.count("arg_int") == 1);
+
+    std::unordered_map<uint64_t, const perfetto::protos::DebugAnnotation*> anns_by_iid;
+    for (const auto& ann : first_packet.track_event().debug_annotations()) {
+        REQUIRE(ann.has_name_iid());
+        anns_by_iid[ann.name_iid()] = &ann;
+    }
+    REQUIRE(anns_by_iid.count(ann_name_iids["arg_int"]) == 1);
+    REQUIRE(anns_by_iid.at(ann_name_iids["arg_int"])->int_value() == 42);
+
+    REQUIRE(anns_by_iid.count(ann_name_iids["arg_string"]) == 1);
+    const auto* str_ann = anns_by_iid.at(ann_name_iids["arg_string"]);
+    REQUIRE(str_ann->has_string_value_iid());
+
+    std::unordered_map<std::string, uint64_t> str_value_iids;
+    for (const auto& entry : first_packet.interned_data().debug_annotation_string_values()) {
+        str_value_iids[entry.str()] = entry.iid();
+    }
+    REQUIRE(str_value_iids.count("hello") == 1);
+    REQUIRE(str_value_iids["hello"] == str_ann->string_value_iid());
+
+    const auto& second_packet = trace.packet(3);
+    REQUIRE((second_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0);
+    REQUIRE((second_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) == 0);
+    REQUIRE(second_packet.track_event().name_iid() == first_packet.track_event().name_iid());
+    REQUIRE(!second_packet.has_interned_data());
 }

@@ -1,6 +1,6 @@
 """Main builder class for creating Perfetto traces."""
 
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 # Import will be available after protobuf compilation
 try:
@@ -10,6 +10,7 @@ except ImportError:
     perfetto = None  # type: ignore[assignment]
 
 from .annotations import TrackEventWrapper
+from .interning import InterningState
 
 
 # Type stubs for type checking when perfetto is not available
@@ -35,12 +36,13 @@ class PerfettoTraceBuilder:
     making it easy to create traces for retrocomputer emulators and similar applications.
     """
 
-    def __init__(self, process_name: str):
+    def __init__(self, process_name: str, encoding: str = "inline"):
         """
         Initialize a new trace builder.
 
         Args:
             process_name: Name of the process being traced
+            encoding: "inline" (default) or "interned"
         """
         if perfetto is None:
             raise ImportError(
@@ -48,12 +50,19 @@ class PerfettoTraceBuilder:
                 "Please run 'python setup.py build' to generate protobuf files."
             )
 
+        if encoding not in {"inline", "interned"}:
+            raise ValueError(f"Unknown encoding: {encoding!r}")
+
         self.trace = perfetto.Trace()
         self.last_track_uuid = 0
         self.trusted_packet_sequence_id = 0x123
         self.pid = 1234
         self.last_tid = 1
         self.track_metadata: Dict[int, Dict[str, Any]] = {}
+        self._encoding = encoding
+        self._interning_state: Optional[InterningState] = (
+            InterningState() if encoding == "interned" else None
+        )
 
         # Create the main process
         self.process_uuid = self.add_process(process_name)
@@ -138,9 +147,14 @@ class PerfettoTraceBuilder:
         packet.track_event.type = event_type
         packet.track_event.track_uuid = track_uuid
         if name is not None:
-            packet.track_event.name = name
+            if self._interning_state is not None:
+                packet.track_event.name_iid = self._interning_state.intern_event_name(
+                    name, packet
+                )
+            else:
+                packet.track_event.name = name
         packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
-        return packet.track_event
+        return packet
 
     def begin_slice(self, track_uuid: int, name: str, timestamp: int) -> TrackEventWrapper:
         """
@@ -161,7 +175,9 @@ class PerfettoTraceBuilder:
             name,
         )
 
-        return TrackEventWrapper(event)
+        return TrackEventWrapper(
+            event.track_event, packet=event, interning_state=self._interning_state
+        )
 
     def end_slice(self, track_uuid: int, timestamp: int) -> None:
         """
@@ -192,7 +208,9 @@ class PerfettoTraceBuilder:
             name,
         )
 
-        return TrackEventWrapper(event)
+        return TrackEventWrapper(
+            event.track_event, packet=event, interning_state=self._interning_state
+        )
 
     def add_counter_track(self, name: str, unit: str = "",
                          parent_uuid: Optional[int] = None) -> int:
@@ -242,9 +260,9 @@ class PerfettoTraceBuilder:
         )
 
         if isinstance(value, int):
-            event.counter_value = value
+            event.track_event.counter_value = value
         else:
-            event.double_counter_value = value
+            event.track_event.double_counter_value = value
 
     def add_flow(self, track_uuid: int, name: str, timestamp: int,
                  flow_id: int, terminating: bool = False) -> TrackEventWrapper:

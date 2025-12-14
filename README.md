@@ -17,6 +17,7 @@ This is a multi-language project with implementations in different languages:
 - **CPU-Independent**: Designed to work with any retrocomputer architecture
 - **Rich Annotations**: Support for debug data, register states, and custom metadata
 - **Multiple Track Types**: Threads, counters, and flow events
+- **Opt-in String Interning**: Smaller traces via `TracePacket.interned_data` dictionaries
 - **Direct Protobuf**: Uses protobuf directly for maximum control
 
 ## Python Installation
@@ -61,6 +62,34 @@ io_event.add_annotations({
 
 # Save the trace
 builder.save("trace.perfetto-trace")
+```
+
+### Interned encoding (Python)
+
+Interning is opt-in and keeps your public API string-based:
+
+```python
+from retrobus_perfetto import PerfettoTraceBuilder, resolve_interned_trace
+from retrobus_perfetto.proto import perfetto_pb2
+
+builder = PerfettoTraceBuilder("My Emulator", encoding="interned")
+# ... emit events ...
+
+# Optional: make interned traces readable for string-based tooling
+trace = perfetto_pb2.Trace()
+trace.ParseFromString(builder.serialize())
+resolved = resolve_interned_trace(trace, inplace=False)
+```
+
+### Interned encoding (C++)
+
+```cpp
+#include <retrobus/retrobus_perfetto.hpp>
+
+retrobus::PerfettoTraceBuilder builder(
+    "My Emulator",
+    /*pid=*/1234,
+    retrobus::PerfettoTraceBuilder::Encoding::Interned);
 ```
 
 ## Documentation

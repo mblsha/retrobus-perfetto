@@ -2,6 +2,42 @@ syntax = "proto2";
 option cc_enable_arenas = false;
 package perfetto.protos;
 
+// ------------------------------ DATA INTERNING: ------------------------------
+// This file intentionally vendors only a small subset of Perfetto's full proto
+// schema. Interning requires TracePacket.interned_data and sequence flags to
+// be present with their upstream field numbers.
+//
+// The definitions below are kept compatible with upstream Perfetto protos
+// (field numbers + wire types) so that traces are readable by the Perfetto UI
+// and trace processor.
+
+// Interned name of a TrackEvent (TrackEvent.name_iid).
+message EventName {
+  optional uint64 iid = 1;
+  optional string name = 2;
+}
+
+// Interned name of a DebugAnnotation (DebugAnnotation.name_iid).
+message DebugAnnotationName {
+  optional uint64 iid = 1;
+  optional string name = 2;
+}
+
+// Generic interned string payload (used by DebugAnnotation.string_value_iid).
+// Upstream uses bytes (not string) to avoid UTF-8 enforcement in some tables.
+message InternedString {
+  optional uint64 iid = 1;
+  optional bytes str = 2;
+}
+
+// New dictionary entries for the interning indices on a packet sequence.
+// Note: Field numbers must match upstream Perfetto protos.
+message InternedData {
+  repeated EventName event_names = 2;
+  repeated DebugAnnotationName debug_annotation_names = 3;
+  repeated InternedString debug_annotation_string_values = 29;
+}
+
 message DebugAnnotation {
   // Name fields are set only for dictionary entries.
   oneof name_field {
@@ -435,6 +471,24 @@ message TracePacket {
     // ...
   }
 
+  // New entries for the current packet sequence's incremental state (e.g.
+  // interned dictionaries).
+  optional InternedData interned_data = 12;
+
+  enum SequenceFlags {
+    SEQ_UNSPECIFIED = 0;
+
+    // Indicates that the writer has cleared its incremental state for this
+    // packet sequence and will re-emit any needed incremental data (including
+    // interned data) before referring to it again.
+    SEQ_INCREMENTAL_STATE_CLEARED = 1;
+
+    // Indicates that this packet requires incremental state (e.g. InternedData)
+    // to be parsed correctly.
+    SEQ_NEEDS_INCREMENTAL_STATE = 2;
+  };
+  optional uint32 sequence_flags = 13;
+
   // Trusted user id of the producer which generated this packet. Keep in sync
   // with TrustedPacket.trusted_uid.
   //
@@ -494,4 +548,3 @@ message Trace {
   // in a Trace proto. Nothing should ever rely on the full trace, all the
   // logic should be based on TracePacket(s).
 }
-
