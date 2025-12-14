@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Any, Dict
 
 from .interning import SEQ_INCREMENTAL_STATE_CLEARED, SEQ_NEEDS_INCREMENTAL_STATE
-
-try:
-    from .proto import perfetto_pb2
-except ImportError:  # pragma: no cover
-    perfetto_pb2 = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -49,12 +44,12 @@ def _resolve_debug_annotation(
 
 
 def resolve_interned_trace(
-    trace: "perfetto_pb2.Trace",
+    trace: Any,
     *,
     inplace: bool = False,
     encoding: str = "utf-8",
     errors: str = "replace",
-) -> "perfetto_pb2.Trace":
+) -> Any:
     """Resolve interned IDs to strings.
 
     This is intended for debugging/diff tooling: it rewrites *_iid oneofs
@@ -62,14 +57,8 @@ def resolve_interned_trace(
     into their string counterparts so existing code that expects inline strings
     keeps working.
     """
-    if perfetto_pb2 is None:  # pragma: no cover
-        raise ImportError(
-            "Perfetto protobuf module not found. "
-            "Please build/install retrobus-perfetto to generate protobuf bindings."
-        )
-
     if not inplace:
-        resolved = perfetto_pb2.Trace()
+        resolved = trace.__class__()
         resolved.CopyFrom(trace)
         trace = resolved
 
