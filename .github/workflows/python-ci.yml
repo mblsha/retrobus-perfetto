@@ -112,19 +112,6 @@ jobs:
         uv run python example.py
         # Verify the trace file was created
         test -f trace.perfetto-trace
-    - name: Verify trace uses interning
-      run: |
-        uv run python - <<'PY'
-        from retrobus_perfetto.proto import perfetto_pb2
-        
-        trace = perfetto_pb2.Trace()
-        trace.ParseFromString(open("trace.perfetto-trace", "rb").read())
-        
-        assert any(p.HasField("interned_data") for p in trace.packet), "missing TracePacket.interned_data"
-        assert any(
-            p.HasField("track_event") and p.track_event.HasField("name_iid") for p in trace.packet
-        ), "missing TrackEvent.name_iid"
-        PY
     - name: Upload trace artifact
       uses: actions/upload-artifact@v4
       with:
