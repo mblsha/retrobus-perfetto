@@ -17,7 +17,7 @@ This is a multi-language project with implementations in different languages:
 - **CPU-Independent**: Designed to work with any retrocomputer architecture
 - **Rich Annotations**: Support for debug data, register states, and custom metadata
 - **Multiple Track Types**: Threads, counters, and flow events
-- **Opt-in String Interning**: Smaller traces via `TracePacket.interned_data` dictionaries
+- **String Interning (default)**: Smaller traces via `TracePacket.interned_data` dictionaries
 - **Direct Protobuf**: Uses protobuf directly for maximum control
 
 ## Python Installation
