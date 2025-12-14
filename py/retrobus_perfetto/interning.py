@@ -7,7 +7,7 @@ entries into TracePacket.interned_data as strings are first encountered.
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict
 
 # Keep these values in sync with TracePacket.SequenceFlags in proto/perfetto.proto.
 SEQ_INCREMENTAL_STATE_CLEARED = 1
