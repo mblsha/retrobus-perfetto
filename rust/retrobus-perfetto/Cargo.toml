@@ -12,7 +12,8 @@ categories = ["development-tools::profiling", "embedded", "emulators"]
 
 [dependencies]
 anyhow = "1.0.90"
-perfetto-writer = "0.3.2"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+perfetto-writer = { path = "../../third_party/perfetto-writer" }
 
 [dev-dependencies]
 perfetto_protos = "0.51.1"
