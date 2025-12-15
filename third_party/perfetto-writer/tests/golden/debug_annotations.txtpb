@@ -1,0 +1,112 @@
+packet {
+  trusted_packet_sequence_id: 12345
+  sequence_flags: 1
+}
+packet {
+  track_descriptor {
+    uuid: 200
+    name: "annotation_thread"
+  }
+  trusted_packet_sequence_id: 12345
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    event_names {
+      iid: 1
+      name: "annotated_event"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    event_categories {
+      iid: 1
+      name: "annotations"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    debug_annotation_names {
+      iid: 1
+      name: "is_enabled"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    debug_annotation_names {
+      iid: 2
+      name: "count"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    debug_annotation_names {
+      iid: 3
+      name: "id"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    debug_annotation_names {
+      iid: 4
+      name: "ratio"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    debug_annotation_names {
+      iid: 5
+      name: "message"
+    }
+  }
+}
+packet {
+  trusted_packet_sequence_id: 12345
+  interned_data {
+    debug_annotation_string_values {
+      iid: 1
+      str: "Hello, Perfetto!"
+    }
+  }
+}
+packet {
+  track_event {
+    category_iids: 1
+    name_iid: 1
+    type: TYPE_SLICE_BEGIN
+    track_uuid: 200
+    debug_annotations {
+      name_iid: 1
+      bool_value: true
+    }
+    debug_annotations {
+      name_iid: 2
+      int_value: 42
+    }
+    debug_annotations {
+      name_iid: 3
+      uint_value: 123
+    }
+    debug_annotations {
+      name_iid: 4
+      double_value: 3.14
+    }
+    debug_annotations {
+      name_iid: 5
+      string_value_iid: 1
+    }
+  }
+  trusted_packet_sequence_id: 12345
+}
