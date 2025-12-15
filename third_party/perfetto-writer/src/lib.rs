@@ -278,12 +278,18 @@ impl<'a, W: Write> Context<W> {
     }
 }
 pub fn current_thread() -> i32 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // wasm32-unknown-unknown has no native threads; a stable synthetic tid is fine.
+        0
+    }
+
     #[cfg(target_os = "linux")]
     {
         nix::unistd::gettid().as_raw()
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     {
         (nix::sys::pthread::pthread_self() as i32).abs()
     }
