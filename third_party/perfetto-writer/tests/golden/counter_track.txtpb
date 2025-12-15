@@ -1,0 +1,17 @@
+packet {
+  trusted_packet_sequence_id: 12345
+  sequence_flags: 1
+}
+packet {
+  track_descriptor {
+    uuid: 100
+    name: "cpu_usage"
+    counter {
+      unit: UNIT_COUNT
+      unit_name: "percent"
+      unit_multiplier: 1
+      is_incremental: false
+    }
+  }
+  trusted_packet_sequence_id: 12345
+}
