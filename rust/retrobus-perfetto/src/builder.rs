@@ -419,6 +419,14 @@ mod tests {
             .collect();
         assert!(names.contains(&"TestProcess".to_string()));
         assert!(names.iter().any(|n| n.contains("cycles")));
+
+        let cpu_td = trace
+            .packet
+            .iter()
+            .find(|p| p.has_track_descriptor() && p.track_descriptor().uuid() == thread_track)
+            .expect("cpu track")
+            .track_descriptor();
+        assert_eq!(cpu_td.thread.thread_name(), "CPU");
     }
 
     #[test]
