@@ -326,7 +326,13 @@ impl<'a, W: io::Write> TrackBuilder<'a, W> {
     }
 
     pub fn name<T: Into<String>>(mut self, name: T) -> Self {
-        self.track.set_name(name.into());
+        let name = name.into();
+        self.track.set_name(name.clone());
+        if let Some(thread) = self.track.thread.as_mut() {
+            if thread.thread_name().is_empty() {
+                thread.set_thread_name(name);
+            }
+        }
         self
     }
 
