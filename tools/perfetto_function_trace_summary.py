@@ -27,8 +27,8 @@ def main() -> None:
     parser.add_argument(
         "--track",
         action="append",
-        default=None,
-        help="Restrict to specific track name(s). Can be repeated.",
+        required=True,
+        help="Track name(s) that contain function slices. Can be repeated.",
     )
     parser.add_argument(
         "--exclude-track",
@@ -74,7 +74,7 @@ def main() -> None:
     content = summarize_trace_to_yaml(
         args.trace,
         ignore_keys=args.ignore_key,
-        include_tracks=args.track or ["Functions"],
+        include_tracks=args.track,
         exclude_tracks=args.exclude_track,
         name_map=name_map,
         name_format=args.name_format,
