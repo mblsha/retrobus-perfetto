@@ -109,14 +109,14 @@ Summarize function call slices (typically on the `Functions` track) into a compa
 
 **Usage:**
 ```bash
-# Summarize the Functions track (default)
-./perfetto_function_trace_summary.py trace.perfetto-trace
+# Summarize an explicit Functions track (required)
+./perfetto_function_trace_summary.py trace.perfetto-trace --track Functions
 
 # Explicit track filtering and key suppression
 ./perfetto_function_trace_summary.py trace.perfetto-trace --track Functions --ignore-key op_index
 
 # Resolve names via a JSON map (e.g., bnida.json)
-./perfetto_function_trace_summary.py trace.perfetto-trace --name-map path/to/bnida.json
+./perfetto_function_trace_summary.py trace.perfetto-trace --track Functions --name-map path/to/bnida.json
 ```
 
 ## Customization
