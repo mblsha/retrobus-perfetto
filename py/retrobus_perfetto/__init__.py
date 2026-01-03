@@ -15,7 +15,7 @@ from .reader import resolve_interned_trace
 # Make proto module available for direct import
 from . import proto
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = [
     "PerfettoTraceBuilder",
     "DebugAnnotationBuilder",
