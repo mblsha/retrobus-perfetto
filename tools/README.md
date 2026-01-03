@@ -98,6 +98,27 @@ Side-by-side comparison tool for two Perfetto traces that should represent the s
 - Debug non-deterministic behavior
 - Regression testing
 
+### 4. perfetto_function_trace_summary.py
+
+Summarize function call slices (typically on the `Functions` track) into a compact YAML call graph.
+
+**Features:**
+- Aggregates call counts and deduplicates debug-annotation payloads
+- Resolves function names via JSON maps (supports `bnida.json`-style `names` dictionaries)
+- Optional track filtering and integer formatting
+
+**Usage:**
+```bash
+# Summarize the Functions track (default)
+./perfetto_function_trace_summary.py trace.perfetto-trace
+
+# Explicit track filtering and key suppression
+./perfetto_function_trace_summary.py trace.perfetto-trace --track Functions --ignore-key op_index
+
+# Resolve names via a JSON map (e.g., bnida.json)
+./perfetto_function_trace_summary.py trace.perfetto-trace --name-map path/to/bnida.json
+```
+
 ## Customization
 
 ### Adapting for Different CPU Architectures
