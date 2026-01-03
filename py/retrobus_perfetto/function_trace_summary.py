@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .proto import perfetto_pb2
+from .proto import perfetto_pb2 as _perfetto_pb2
 from .reader import resolve_interned_trace
 
 
@@ -28,8 +28,10 @@ class SliceEvent:
     timestamp: int
     annotations: Dict[str, object]
 
+perfetto: Any = _perfetto_pb2
 
-def _annotation_value(annotation: perfetto_pb2.DebugAnnotation) -> object | None:
+
+def _annotation_value(annotation: Any) -> object | None:
     if annotation.dict_entries:
         return {entry.name: _annotation_value(entry) for entry in annotation.dict_entries}
     if annotation.array_values:
@@ -51,7 +53,7 @@ def _annotation_value(annotation: perfetto_pb2.DebugAnnotation) -> object | None
     return None
 
 
-def _extract_annotations(event: perfetto_pb2.TrackEvent) -> Dict[str, object]:
+def _extract_annotations(event: Any) -> Dict[str, object]:
     return {
         ann.name: _annotation_value(ann)
         for ann in event.debug_annotations
@@ -162,7 +164,7 @@ def load_name_map(path: Path) -> Dict[int, str]:
 
 
 def load_slice_events(trace_path: Path) -> List[SliceEvent]:
-    trace = perfetto_pb2.Trace()
+    trace = perfetto.Trace()
     trace.ParseFromString(trace_path.read_bytes())
     trace = resolve_interned_trace(trace, inplace=False)
 
@@ -185,8 +187,8 @@ def load_slice_events(trace_path: Path) -> List[SliceEvent]:
 
         event = packet.track_event
         if event.type not in (
-            perfetto_pb2.TrackEvent.TYPE_SLICE_BEGIN,
-            perfetto_pb2.TrackEvent.TYPE_SLICE_END,
+            perfetto.TrackEvent.TYPE_SLICE_BEGIN,
+            perfetto.TrackEvent.TYPE_SLICE_END,
         ):
             continue
 
@@ -236,7 +238,7 @@ def build_call_graph(
             continue
         if event.track in exclude_filter:
             continue
-        if event.event_type == perfetto_pb2.TrackEvent.TYPE_SLICE_BEGIN:
+        if event.event_type == perfetto.TrackEvent.TYPE_SLICE_BEGIN:
             if active:
                 parent_frame = max(active, key=lambda frame: frame.start_ts)
                 parent_node = parent_frame.node
@@ -270,7 +272,7 @@ def build_call_graph(
             frame = Frame(node=child, start_ts=event.timestamp, track=event.track)
             track_stacks.setdefault(event.track, []).append(frame)
             active.append(frame)
-        elif event.event_type == perfetto_pb2.TrackEvent.TYPE_SLICE_END:
+        elif event.event_type == perfetto.TrackEvent.TYPE_SLICE_END:
             if track_stacks.get(event.track):
                 frame = track_stacks[event.track].pop()
                 if frame in active:
