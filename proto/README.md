@@ -15,6 +15,17 @@ Generated files will be placed in `py/retrobus_perfetto/proto/`.
 ### C++
 Include these proto files in your C++ build system using your preferred method (CMake, Bazel, etc.).
 
+### TypeScript (Node)
+The TypeScript bindings are generated via `protobufjs` static modules:
+
+```bash
+cd ts
+npm install
+npm run gen:proto
+```
+
+Generated files are placed in `ts/src/proto/`.
+
 ## Notes
 
 These protocol definitions are shared across all implementations to ensure compatibility.

@@ -72,6 +72,9 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
+# Node
+ts/node_modules/
+
 # Example outputs
 *.perfetto-trace
 
@@ -86,4 +89,3 @@ cpp/*.dll
 *.pb.cc
 *.pb.h
 *.pb.o
-
