@@ -10,14 +10,14 @@ if (source.includes("const $protobuf = $protobufModule.default ?? $protobufModul
   process.exit(0);
 }
 
-const pattern = /import \\* as \\$protobuf from \"protobufjs\\/minimal\";/;
+const pattern = /import \* as \$protobuf from "protobufjs\/minimal";/;
 if (!pattern.test(source)) {
   throw new Error("Expected protobufjs import not found in generated file.");
 }
 
 const patched = source.replace(
   pattern,
-  "import * as $protobufModule from \\\"protobufjs/minimal\\\";\\n\\nconst $protobuf = $protobufModule.default ?? $protobufModule;"
+  "import * as $protobufModule from \"protobufjs/minimal\";\n\nconst $protobuf = $protobufModule.default ?? $protobufModule;"
 );
 
 fs.writeFileSync(targetPath, patched, "utf8");
