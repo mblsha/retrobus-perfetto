@@ -16,7 +16,8 @@
     }
   },
   "scripts": {
-    "gen:proto": "pbjs -t static-module -w es6 -o src/proto/perfetto_pb.js ../proto/perfetto.proto && pbts -o src/proto/perfetto_pb.d.ts src/proto/perfetto_pb.js"
+    "gen:proto": "pbjs -t static-module -w es6 -o src/proto/perfetto_pb.js ../proto/perfetto.proto && pbts -o src/proto/perfetto_pb.d.ts src/proto/perfetto_pb.js && node ./scripts/patch-proto.js",
+    "pretest": "npm run gen:proto"
   },
   "dependencies": {
     "protobufjs": "^7.2.6"

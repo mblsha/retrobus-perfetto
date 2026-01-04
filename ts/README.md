@@ -12,9 +12,11 @@ npm install
 npm run gen:proto
 ```
 
-Generated files land in `ts/src/proto/`:
+Generated files land in `ts/src/proto/` (gitignored):
 - `perfetto_pb.js` (ES module)
 - `perfetto_pb.d.ts` (TypeScript types)
+
+Run `npm run gen:proto` before tests or when updating `proto/perfetto.proto`.
 
 ## Usage
 
