@@ -8,6 +8,7 @@ This is a multi-language project with implementations in different languages:
 
 - `py/` - Python implementation
 - `cpp/` - C++ header-only implementation
+- `ts/` - TypeScript protobuf bindings (Node/TS)
 - `proto/` - Shared protocol buffer definitions
 - `tools/` - Analysis tools for Perfetto traces
 
@@ -98,6 +99,7 @@ retrobus::PerfettoTraceBuilder builder("My Emulator");  // default: interned
 
 - [Python Implementation](py/README.md)
 - [C++ Design Document](cpp-header-only-design.md)
+- [TypeScript Protobuf Bindings](ts/README.md)
 - [Protocol Buffer Definitions](proto/README.md)
 - [Trace Analysis Tools](tools/README.md)
 
