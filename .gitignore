@@ -74,6 +74,8 @@ Thumbs.db
 
 # Node
 ts/node_modules/
+ts/src/proto/perfetto_pb.js
+ts/src/proto/perfetto_pb.d.ts
 
 # Example outputs
 *.perfetto-trace

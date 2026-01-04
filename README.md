@@ -8,7 +8,7 @@ This is a multi-language project with implementations in different languages:
 
 - `py/` - Python implementation
 - `cpp/` - C++ header-only implementation
-- `ts/` - TypeScript protobuf bindings (Node/TS)
+- `ts/` - TypeScript protobuf bindings (Node/TS, run `npm run gen:proto` in `ts/` to generate)
 - `proto/` - Shared protocol buffer definitions
 - `tools/` - Analysis tools for Perfetto traces
 
