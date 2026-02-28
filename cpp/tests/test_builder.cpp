@@ -412,6 +412,41 @@ TEST_CASE("Resolve interned trace rewrites IID fields to strings", "[builder][in
     REQUIRE(saw_resolved_annotation_value);
 }
 
+TEST_CASE("Resolve interned trace ignores invalid packet sequence IDs", "[builder][interning]") {
+    perfetto::protos::Trace trace;
+
+    {
+        auto* packet = trace.add_packet();
+        packet->set_sequence_flags(perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED |
+                                   perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+        auto* entry = packet->mutable_interned_data()->add_event_names();
+        entry->set_iid(1);
+        entry->set_name("alpha");
+    }
+    {
+        auto* packet = trace.add_packet();
+        packet->set_sequence_flags(perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED |
+                                   perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+        auto* entry = packet->mutable_interned_data()->add_event_names();
+        entry->set_iid(1);
+        entry->set_name("beta");
+    }
+    {
+        auto* packet = trace.add_packet();
+        packet->set_sequence_flags(perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+        auto* event = packet->mutable_track_event();
+        event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
+        event->set_track_uuid(1);
+        event->set_name_iid(1);
+    }
+
+    resolve_interned_trace_inplace(trace);
+
+    const auto& event = trace.packet(2).track_event();
+    REQUIRE(event.name_field_case() == perfetto::protos::TrackEvent::kNameIid);
+    REQUIRE_FALSE(event.has_name());
+}
+
 TEST_CASE("Thread safety", "[builder][thread-safety]") {
     PerfettoTraceBuilder builder("TestProcess");
     
