@@ -195,7 +195,7 @@ private:
     perfetto::protos::TracePacket* create_packet() {
         auto* packet = trace_->add_packet();
         packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
-        if (encoding_ == Encoding::Interned && !emitted_incremental_state_cleared_) {
+        if (!emitted_incremental_state_cleared_) {
             packet->set_sequence_flags(packet->sequence_flags() |
                                        perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED);
             emitted_incremental_state_cleared_ = true;
@@ -210,19 +210,12 @@ private:
     }
     
 public:
-    enum class Encoding {
-        Inline,
-        Interned,
-    };
-
     explicit PerfettoTraceBuilder(
         std::string_view process_name,
-        int32_t pid = detail::DEFAULT_PROCESS_PID,
-        Encoding encoding = Encoding::Interned)
+        int32_t pid = detail::DEFAULT_PROCESS_PID)
         : trace_(std::make_unique<perfetto::protos::Trace>())
         , process_uuid_(++last_track_uuid_)
-        , pid_(pid)
-        , encoding_(encoding) {
+        , pid_(pid) {
         
         // Add process descriptor
         auto* packet = create_packet();
@@ -374,7 +367,6 @@ public:
     }
 
 private:
-    Encoding encoding_{Encoding::Inline};
 };
 
 // Wrapper for track events to enable annotation chaining
@@ -626,13 +618,9 @@ inline TrackEventWrapper PerfettoTraceBuilder::begin_slice(uint64_t track_uuid, 
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_BEGIN);
     event->set_track_uuid(track_uuid);
-    if (encoding_ == Encoding::Interned) {
-        event->set_name_iid(interning_state_.intern_event_name(name, packet));
-    } else {
-        event->set_name(std::string(name));
-    }
+    event->set_name_iid(interning_state_.intern_event_name(name, packet));
     
-    return TrackEventWrapper(packet, event, encoding_ == Encoding::Interned ? &interning_state_ : nullptr);
+    return TrackEventWrapper(packet, event, &interning_state_);
 }
 
 inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns) {
@@ -641,13 +629,9 @@ inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(uint64_t track_
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
     event->set_track_uuid(track_uuid);
-    if (encoding_ == Encoding::Interned) {
-        event->set_name_iid(interning_state_.intern_event_name(name, packet));
-    } else {
-        event->set_name(std::string(name));
-    }
+    event->set_name_iid(interning_state_.intern_event_name(name, packet));
     
-    return TrackEventWrapper(packet, event, encoding_ == Encoding::Interned ? &interning_state_ : nullptr);
+    return TrackEventWrapper(packet, event, &interning_state_);
 }
 
 inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns,
@@ -657,11 +641,7 @@ inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std
     auto* event = packet->mutable_track_event();
     event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
     event->set_track_uuid(track_uuid);
-    if (encoding_ == Encoding::Interned) {
-        event->set_name_iid(interning_state_.intern_event_name(name, packet));
-    } else {
-        event->set_name(std::string(name));
-    }
+    event->set_name_iid(interning_state_.intern_event_name(name, packet));
     
     if (terminating) {
         event->add_terminating_flow_ids(flow_id);
@@ -669,7 +649,7 @@ inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std
         event->add_flow_ids(flow_id);
     }
     
-    return TrackEventWrapper(packet, event, encoding_ == Encoding::Interned ? &interning_state_ : nullptr);
+    return TrackEventWrapper(packet, event, &interning_state_);
 }
 
 inline AnnotationBuilder TrackEventWrapper::annotation(std::string_view name) {

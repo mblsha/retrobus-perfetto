@@ -89,10 +89,7 @@ resolved = resolve_interned_trace(trace, inplace=False)
 #include <retrobus/retrobus_perfetto.hpp>
 
 retrobus::PerfettoTraceBuilder builder("My Emulator");  // default: interned
-// retrobus::PerfettoTraceBuilder builder(
-//     "My Emulator",
-//     /*pid=*/1234,
-//     retrobus::PerfettoTraceBuilder::Encoding::Inline);  // opt out
+// C++ API always emits interned string fields.
 
 // Optional: resolve IID-backed names to inline strings for
 // string-based debugging/diff tooling.

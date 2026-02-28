@@ -141,12 +141,12 @@ int main() {
 ### PerfettoTraceBuilder
 
 Main builder class for creating traces.
+The C++ API emits interned string fields by default and only.
 
 ```cpp
 // Construction
 PerfettoTraceBuilder(std::string_view process_name,
-                     int32_t pid = 1234,
-                     Encoding encoding = Encoding::Interned);
+                     int32_t pid = 1234);
 
 // Track management
 uint64_t add_thread(std::string_view name);
