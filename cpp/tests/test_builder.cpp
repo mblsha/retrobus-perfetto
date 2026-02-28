@@ -280,6 +280,130 @@ TEST_CASE("Serialization", "[builder][serialization]") {
     }
 }
 
+TEST_CASE("Interned encoding uses IID-backed strings", "[builder][interning]") {
+    PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Interned);
+    const auto thread = builder.add_thread("TestThread");
+
+    // Repeated names/strings should be interned and reused.
+    builder.begin_slice(thread, "repeat_name", 1000)
+            .add_annotation("kind", "repeat_value")
+            .add_annotation("kind", "repeat_value");
+    builder.end_slice(thread, 2000);
+
+    builder.add_instant_event(thread, "repeat_name", 3000)
+            .add_annotation("kind", "repeat_value");
+
+    perfetto::protos::Trace trace;
+    const auto data = builder.serialize();
+    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+
+    bool saw_cleared_flag = false;
+    bool saw_needs_flag = false;
+    bool saw_event_name_intern = false;
+    bool saw_annotation_name_intern = false;
+    bool saw_annotation_string_intern = false;
+    bool saw_event_name_iid = false;
+    bool saw_annotation_name_iid = false;
+    bool saw_annotation_string_iid = false;
+
+    for (const auto& packet : trace.packet()) {
+        const auto flags = packet.sequence_flags();
+        if ((flags & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
+            saw_cleared_flag = true;
+        }
+        if ((flags & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0) {
+            saw_needs_flag = true;
+        }
+
+        if (packet.has_interned_data()) {
+            for (const auto& name : packet.interned_data().event_names()) {
+                if (name.name() == "repeat_name") {
+                    saw_event_name_intern = true;
+                }
+            }
+            for (const auto& name : packet.interned_data().debug_annotation_names()) {
+                if (name.name() == "kind") {
+                    saw_annotation_name_intern = true;
+                }
+            }
+            for (const auto& value : packet.interned_data().debug_annotation_string_values()) {
+                if (value.str() == "repeat_value") {
+                    saw_annotation_string_intern = true;
+                }
+            }
+        }
+
+        if (!packet.has_track_event()) {
+            continue;
+        }
+        const auto& event = packet.track_event();
+        if (event.name_field_case() == perfetto::protos::TrackEvent::kNameIid) {
+            saw_event_name_iid = true;
+        }
+        for (const auto& ann : event.debug_annotations()) {
+            if (ann.name_field_case() == perfetto::protos::DebugAnnotation::kNameIid) {
+                saw_annotation_name_iid = true;
+            }
+            if (ann.value_case() ==
+                perfetto::protos::DebugAnnotation::kStringValueIid) {
+                saw_annotation_string_iid = true;
+            }
+        }
+    }
+
+    REQUIRE(saw_cleared_flag);
+    REQUIRE(saw_needs_flag);
+    REQUIRE(saw_event_name_intern);
+    REQUIRE(saw_annotation_name_intern);
+    REQUIRE(saw_annotation_string_intern);
+    REQUIRE(saw_event_name_iid);
+    REQUIRE(saw_annotation_name_iid);
+    REQUIRE(saw_annotation_string_iid);
+}
+
+TEST_CASE("Resolve interned trace rewrites IID fields to strings", "[builder][interning]") {
+    PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Interned);
+    const auto thread = builder.add_thread("TestThread");
+
+    builder.add_instant_event(thread, "resolve_me", 1000)
+            .add_annotation("key_name", "value_name");
+
+    perfetto::protos::Trace trace;
+    const auto data = builder.serialize();
+    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+
+    auto resolved = resolve_interned_trace(trace);
+
+    bool saw_resolved_event_name = false;
+    bool saw_resolved_annotation_name = false;
+    bool saw_resolved_annotation_value = false;
+
+    for (const auto& packet : resolved.packet()) {
+        if (!packet.has_track_event()) {
+            continue;
+        }
+        const auto& event = packet.track_event();
+        if (event.name_field_case() == perfetto::protos::TrackEvent::kName &&
+            event.name() == "resolve_me") {
+            saw_resolved_event_name = true;
+        }
+        for (const auto& ann : event.debug_annotations()) {
+            if (ann.name_field_case() == perfetto::protos::DebugAnnotation::kName &&
+                ann.name() == "key_name") {
+                saw_resolved_annotation_name = true;
+            }
+            if (ann.value_case() == perfetto::protos::DebugAnnotation::kStringValue &&
+                ann.string_value() == "value_name") {
+                saw_resolved_annotation_value = true;
+            }
+        }
+    }
+
+    REQUIRE(saw_resolved_event_name);
+    REQUIRE(saw_resolved_annotation_name);
+    REQUIRE(saw_resolved_annotation_value);
+}
+
 TEST_CASE("Thread safety", "[builder][thread-safety]") {
     PerfettoTraceBuilder builder("TestProcess");
     

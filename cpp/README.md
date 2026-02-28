@@ -144,7 +144,9 @@ Main builder class for creating traces.
 
 ```cpp
 // Construction
-PerfettoTraceBuilder(std::string_view process_name, int32_t pid = 1234);
+PerfettoTraceBuilder(std::string_view process_name,
+                     int32_t pid = 1234,
+                     Encoding encoding = Encoding::Interned);
 
 // Track management
 uint64_t add_thread(std::string_view name);
@@ -163,6 +165,10 @@ void update_counter(uint64_t track, double value, uint64_t timestamp_ns);
 // Output
 void save(const std::filesystem::path& path) const;
 std::vector<uint8_t> serialize() const;
+
+// Interned string helpers (for debug/diff tooling)
+void resolve_interned_trace_inplace(perfetto::protos::Trace& trace);
+perfetto::protos::Trace resolve_interned_trace(const perfetto::protos::Trace& trace);
 ```
 
 ### TrackEventWrapper
