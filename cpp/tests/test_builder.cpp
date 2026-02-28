@@ -15,6 +15,14 @@ std::string to_textproto(const PerfettoTraceBuilder& builder) {
     if (!trace.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
         return "ERROR: Failed to parse trace data";
     }
+
+    // Snapshot canonicalization: resolve interned IDs and remove
+    // sequence/interning metadata so snapshots stay semantically focused.
+    resolve_interned_trace_inplace(trace);
+    for (auto& packet : *trace.mutable_packet()) {
+        packet.clear_sequence_flags();
+        packet.clear_interned_data();
+    }
     
     std::string textproto;
     google::protobuf::TextFormat::PrintToString(trace, &textproto);
@@ -281,7 +289,7 @@ TEST_CASE("Serialization", "[builder][serialization]") {
 }
 
 TEST_CASE("Interned encoding uses IID-backed strings", "[builder][interning]") {
-    PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Interned);
+    PerfettoTraceBuilder builder("TestProcess", 1234);
     const auto thread = builder.add_thread("TestThread");
 
     // Repeated names/strings should be interned and reused.
@@ -362,7 +370,7 @@ TEST_CASE("Interned encoding uses IID-backed strings", "[builder][interning]") {
 }
 
 TEST_CASE("Resolve interned trace rewrites IID fields to strings", "[builder][interning]") {
-    PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Interned);
+    PerfettoTraceBuilder builder("TestProcess", 1234);
     const auto thread = builder.add_thread("TestThread");
 
     builder.add_instant_event(thread, "resolve_me", 1000)
@@ -424,7 +432,7 @@ TEST_CASE("Thread safety", "[builder][thread-safety]") {
 
 TEST_CASE("Textproto snapshot validation", "[builder][snapshot]") {
     SECTION("Empty trace") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         
         const char* expected = R"proto(packet {
   trusted_packet_sequence_id: 1
@@ -443,7 +451,7 @@ TEST_CASE("Textproto snapshot validation", "[builder][snapshot]") {
     }
     
     SECTION("Single thread") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto thread = builder.add_thread("TestThread");
         
         const char* expected = R"proto(packet {
@@ -475,7 +483,7 @@ packet {
     }
     
     SECTION("Basic slice event") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto thread = builder.add_thread("TestThread");
         
         builder.begin_slice(thread, "test_function", 1000);
@@ -527,7 +535,7 @@ packet {
     }
     
     SECTION("Instant event") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto thread = builder.add_thread("TestThread");
         
         builder.add_instant_event(thread, "checkpoint", 1500);
@@ -570,7 +578,7 @@ packet {
     }
     
     SECTION("Counter track and updates") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto counter = builder.add_counter_track("Memory", "MB");
         
         builder.update_counter(counter, 100, 1000);
@@ -619,7 +627,7 @@ packet {
     }
     
     SECTION("Slice with annotations") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto thread = builder.add_thread("TestThread");
         
         auto event = builder.begin_slice(thread, "test_function", 1000);
@@ -697,7 +705,7 @@ packet {
     }
     
     SECTION("Flow events") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto thread1 = builder.add_thread("Producer");
         auto thread2 = builder.add_thread("Consumer");
         
@@ -767,7 +775,7 @@ packet {
     }
     
     SECTION("Nested slices") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto thread = builder.add_thread("TestThread");
         
         builder.begin_slice(thread, "outer_function", 1000);
@@ -838,7 +846,7 @@ packet {
     }
     
     SECTION("Structured annotations") {
-        PerfettoTraceBuilder builder("TestProcess", 1234, PerfettoTraceBuilder::Encoding::Inline);
+        PerfettoTraceBuilder builder("TestProcess", 1234);
         auto thread = builder.add_thread("TestThread");
         
         auto event = builder.begin_slice(thread, "cpu_instruction", 1000);
