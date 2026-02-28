@@ -668,52 +668,61 @@ inline void resolve_interned_trace_inplace(perfetto::protos::Trace& trace)
     std::unordered_map<uint32_t, detail::SequenceInternTables> tables_by_sequence = {};
 
     for (auto& packet : *trace.mutable_packet()) {
-        const auto sequence_id = packet.trusted_packet_sequence_id();
-        auto& tables = tables_by_sequence[sequence_id];
-
-        if (packet.previous_packet_dropped()) {
-            tables.clear(false);
-        }
-
         const auto flags = packet.sequence_flags();
-        if ((flags & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
-            tables.clear(true);
-        }
+        detail::SequenceInternTables* tables = nullptr;
+        const bool has_valid_sequence_id = packet.has_trusted_packet_sequence_id() &&
+                                           packet.trusted_packet_sequence_id() != 0;
 
-        if (packet.has_interned_data()) {
-            const auto& interned = packet.interned_data();
-            for (const auto& entry : interned.event_names()) {
-                tables.event_names[entry.iid()] = entry.name();
+        if (has_valid_sequence_id) {
+            auto& sequence_tables = tables_by_sequence[packet.trusted_packet_sequence_id()];
+            tables = &sequence_tables;
+
+            if (packet.previous_packet_dropped()) {
+                tables->clear(false);
             }
-            for (const auto& entry : interned.debug_annotation_names()) {
-                tables.debug_annotation_names[entry.iid()] = entry.name();
+
+            if ((flags & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
+                tables->clear(true);
             }
-            for (const auto& entry : interned.debug_annotation_string_values()) {
-                tables.debug_annotation_string_values[entry.iid()] = entry.str();
+
+            if (packet.has_interned_data()) {
+                const auto& interned = packet.interned_data();
+                for (const auto& entry : interned.event_names()) {
+                    tables->event_names[entry.iid()] = entry.name();
+                }
+                for (const auto& entry : interned.debug_annotation_names()) {
+                    tables->debug_annotation_names[entry.iid()] = entry.name();
+                }
+                for (const auto& entry : interned.debug_annotation_string_values()) {
+                    tables->debug_annotation_string_values[entry.iid()] = entry.str();
+                }
             }
         }
 
         if (!packet.has_track_event()) {
             continue;
         }
+        if (!tables) {
+            continue;
+        }
 
         const bool needs_state =
                 (flags & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0;
-        if (needs_state && !tables.valid) {
+        if (needs_state && !tables->valid) {
             continue;
         }
 
         auto* event = packet.mutable_track_event();
         if (event->name_field_case() == perfetto::protos::TrackEvent::kNameIid) {
             const auto iid = event->name_iid();
-            const auto it = tables.event_names.find(iid);
-            event->set_name(it != tables.event_names.end()
+            const auto it = tables->event_names.find(iid);
+            event->set_name(it != tables->event_names.end()
                                     ? it->second
                                     : detail::make_missing_iid_string("EventName", iid));
         }
 
         for (auto& annotation : *event->mutable_debug_annotations()) {
-            detail::resolve_debug_annotation_inplace(annotation, tables);
+            detail::resolve_debug_annotation_inplace(annotation, *tables);
         }
     }
 }
