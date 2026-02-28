@@ -93,6 +93,13 @@ retrobus::PerfettoTraceBuilder builder("My Emulator");  // default: interned
 //     "My Emulator",
 //     /*pid=*/1234,
 //     retrobus::PerfettoTraceBuilder::Encoding::Inline);  // opt out
+
+// Optional: resolve IID-backed names to inline strings for
+// string-based debugging/diff tooling.
+perfetto::protos::Trace trace;
+trace.ParseFromString(builder.serialize());
+auto resolved = retrobus::resolve_interned_trace(trace); // returns a copy
+retrobus::resolve_interned_trace_inplace(trace);         // mutates in-place
 ```
 
 ## Documentation

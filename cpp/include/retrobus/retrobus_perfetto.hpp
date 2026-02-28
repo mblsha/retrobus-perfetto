@@ -124,6 +124,54 @@ namespace detail {
         uint64_t next_debug_annotation_name_iid_{1};
         uint64_t next_debug_annotation_string_value_iid_{1};
     };
+
+    struct SequenceInternTables {
+        std::unordered_map<uint64_t, std::string> event_names = {};
+        std::unordered_map<uint64_t, std::string> debug_annotation_names = {};
+        std::unordered_map<uint64_t, std::string> debug_annotation_string_values = {};
+        bool valid = false;
+
+        void clear(const bool mark_valid = false) {
+            event_names.clear();
+            debug_annotation_names.clear();
+            debug_annotation_string_values.clear();
+            valid = mark_valid;
+        }
+    };
+
+    inline std::string make_missing_iid_string(std::string_view kind, const uint64_t iid)
+    {
+        return "<missing " + std::string(kind) + " iid=" + std::to_string(iid) + ">";
+    }
+
+    inline void resolve_debug_annotation_inplace(perfetto::protos::DebugAnnotation& annotation,
+                                                 const SequenceInternTables& tables)
+    {
+        if (annotation.name_field_case() == perfetto::protos::DebugAnnotation::kNameIid) {
+            const auto iid = annotation.name_iid();
+            const auto it = tables.debug_annotation_names.find(iid);
+            annotation.set_name(it != tables.debug_annotation_names.end()
+                                        ? it->second
+                                        : make_missing_iid_string("DebugAnnotationName", iid));
+        }
+
+        if (annotation.value_case() ==
+            perfetto::protos::DebugAnnotation::kStringValueIid) {
+            const auto iid = annotation.string_value_iid();
+            const auto it = tables.debug_annotation_string_values.find(iid);
+            annotation.set_string_value(
+                    it != tables.debug_annotation_string_values.end()
+                            ? it->second
+                            : make_missing_iid_string("DebugAnnotationStringValue", iid));
+        }
+
+        for (auto& entry : *annotation.mutable_dict_entries()) {
+            resolve_debug_annotation_inplace(entry, tables);
+        }
+        for (auto& entry : *annotation.mutable_array_values()) {
+            resolve_debug_annotation_inplace(entry, tables);
+        }
+    }
 } // namespace detail
 
 // Main trace builder class
@@ -632,6 +680,71 @@ inline AnnotationBuilder TrackEventWrapper::annotation(std::string_view name) {
     }
     annotation->set_name(std::string(name));
     return AnnotationBuilder(annotation);
+}
+
+// Resolve interned IDs to inline strings in-place (for debugging/diff tooling).
+inline void resolve_interned_trace_inplace(perfetto::protos::Trace& trace)
+{
+    std::unordered_map<uint32_t, detail::SequenceInternTables> tables_by_sequence = {};
+
+    for (auto& packet : *trace.mutable_packet()) {
+        const auto sequence_id = packet.trusted_packet_sequence_id();
+        auto& tables = tables_by_sequence[sequence_id];
+
+        if (packet.previous_packet_dropped()) {
+            tables.clear(false);
+        }
+
+        const auto flags = packet.sequence_flags();
+        if ((flags & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
+            tables.clear(true);
+        }
+
+        if (packet.has_interned_data()) {
+            const auto& interned = packet.interned_data();
+            for (const auto& entry : interned.event_names()) {
+                tables.event_names[entry.iid()] = entry.name();
+            }
+            for (const auto& entry : interned.debug_annotation_names()) {
+                tables.debug_annotation_names[entry.iid()] = entry.name();
+            }
+            for (const auto& entry : interned.debug_annotation_string_values()) {
+                tables.debug_annotation_string_values[entry.iid()] = entry.str();
+            }
+        }
+
+        if (!packet.has_track_event()) {
+            continue;
+        }
+
+        const bool needs_state =
+                (flags & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0;
+        if (needs_state && !tables.valid) {
+            continue;
+        }
+
+        auto* event = packet.mutable_track_event();
+        if (event->name_field_case() == perfetto::protos::TrackEvent::kNameIid) {
+            const auto iid = event->name_iid();
+            const auto it = tables.event_names.find(iid);
+            event->set_name(it != tables.event_names.end()
+                                    ? it->second
+                                    : detail::make_missing_iid_string("EventName", iid));
+        }
+
+        for (auto& annotation : *event->mutable_debug_annotations()) {
+            detail::resolve_debug_annotation_inplace(annotation, tables);
+        }
+    }
+}
+
+// Return a copy with interned IDs resolved to inline strings.
+[[nodiscard]] inline perfetto::protos::Trace
+resolve_interned_trace(const perfetto::protos::Trace& trace)
+{
+    auto resolved = trace;
+    resolve_interned_trace_inplace(resolved);
+    return resolved;
 }
 
 } // namespace retrobus
