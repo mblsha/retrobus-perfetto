@@ -106,3 +106,25 @@ def test_function_trace_summary(tmp_path: Path) -> None:
             to: 0x1010
 """
     assert summary == expected
+
+
+def test_multi_track_slices_do_not_cross_nest(tmp_path: Path) -> None:
+    trace_path = tmp_path / "multi-track.perfetto-trace"
+    builder = PerfettoTraceBuilder("TestProcess", encoding="interned")
+    functions = builder.add_thread("Functions")
+    opcodes = builder.add_thread("Opcodes")
+
+    builder.begin_slice(functions, "fn@0x1000", 10)
+    builder.begin_slice(opcodes, "NOP", 15)
+    builder.end_slice(opcodes, 16)
+    builder.end_slice(functions, 20)
+    trace_path.write_bytes(builder.serialize())
+
+    summary = summarize_trace_to_yaml(trace_path)
+    expected = """functions:
+  'Functions::fn@0x1000':
+    count: 1
+  'Opcodes::NOP':
+    count: 1
+"""
+    assert summary == expected

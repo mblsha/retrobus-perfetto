@@ -231,7 +231,6 @@ def build_call_graph(
         track: str
 
     track_stacks: Dict[str, List[Frame]] = {}
-    active: List[Frame] = []
 
     for event in events:
         if include_filter and event.track not in include_filter:
@@ -239,11 +238,8 @@ def build_call_graph(
         if event.track in exclude_filter:
             continue
         if event.event_type == perfetto.TrackEvent.TYPE_SLICE_BEGIN:
-            if active:
-                parent_frame = max(active, key=lambda frame: frame.start_ts)
-                parent_node = parent_frame.node
-            else:
-                parent_node = root
+            stack = track_stacks.setdefault(event.track, [])
+            parent_node = stack[-1].node if stack else root
 
             resolved_name = event.name
             if name_map and event.track == "Functions":
@@ -270,13 +266,10 @@ def build_call_graph(
                 child.args[payload_key] = child.args.get(payload_key, 0) + 1
 
             frame = Frame(node=child, start_ts=event.timestamp, track=event.track)
-            track_stacks.setdefault(event.track, []).append(frame)
-            active.append(frame)
+            stack.append(frame)
         elif event.event_type == perfetto.TrackEvent.TYPE_SLICE_END:
             if track_stacks.get(event.track):
-                frame = track_stacks[event.track].pop()
-                if frame in active:
-                    active.remove(frame)
+                track_stacks[event.track].pop()
 
     return root
 
