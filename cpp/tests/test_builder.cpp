@@ -30,6 +30,40 @@ std::string to_textproto(const PerfettoTraceBuilder& builder) {
     return textproto;
 }
 
+void require_annotation_uses_interned_strings(
+    const perfetto::protos::DebugAnnotation& annotation) {
+    REQUIRE(!annotation.has_name());
+    REQUIRE(annotation.name_field_case() !=
+            perfetto::protos::DebugAnnotation::kName);
+    REQUIRE(annotation.value_case() !=
+            perfetto::protos::DebugAnnotation::kStringValue);
+    REQUIRE(annotation.proto_type_descriptor_case() !=
+            perfetto::protos::DebugAnnotation::kProtoTypeName);
+    REQUIRE(!annotation.has_nested_value());
+    for (const auto& entry : annotation.dict_entries()) {
+        require_annotation_uses_interned_strings(entry);
+    }
+    for (const auto& entry : annotation.array_values()) {
+        require_annotation_uses_interned_strings(entry);
+    }
+}
+
+void require_track_events_use_interned_strings(
+    const perfetto::protos::Trace& trace) {
+    for (const auto& packet : trace.packet()) {
+        if (!packet.has_track_event()) {
+            continue;
+        }
+        const auto& event = packet.track_event();
+        REQUIRE(event.categories_size() == 0);
+        REQUIRE(!event.has_name());
+        REQUIRE(event.name_field_case() != perfetto::protos::TrackEvent::kName);
+        for (const auto& annotation : event.debug_annotations()) {
+            require_annotation_uses_interned_strings(annotation);
+        }
+    }
+}
+
 TEST_CASE("PerfettoTraceBuilder construction", "[builder]") {
     SECTION("Default constructor") {
         PerfettoTraceBuilder builder("TestProcess");
@@ -1145,6 +1179,7 @@ TEST_CASE("Interned encoding", "[builder][interning]") {
     perfetto::protos::Trace trace;
     auto data = builder.serialize();
     REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+    require_track_events_use_interned_strings(trace);
 
     const auto& seq_start_packet = trace.packet(0);
     REQUIRE((seq_start_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0);
@@ -1194,4 +1229,41 @@ TEST_CASE("Interned encoding", "[builder][interning]") {
     REQUIRE((second_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) == 0);
     REQUIRE(second_packet.track_event().name_iid() == first_packet.track_event().name_iid());
     REQUIRE(!second_packet.has_interned_data());
+}
+
+TEST_CASE("Interned encoding covers nested annotations", "[builder][interning]") {
+    PerfettoTraceBuilder builder("TestProcess", 1234);
+    auto thread = builder.add_thread("TestThread");
+
+    auto event = builder.add_instant_event(thread, "nested_event", 1500);
+    event.annotation("root")
+        .string("label", "top")
+        .nested("child")
+        .string("name", "leaf")
+        .integer("count", 2);
+
+    perfetto::protos::Trace trace;
+    auto data = builder.serialize();
+    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+
+    require_track_events_use_interned_strings(trace);
+
+    const auto& packet = trace.packet(2);
+    REQUIRE(packet.has_track_event());
+    REQUIRE(packet.track_event().debug_annotations_size() == 1);
+    const auto& root = packet.track_event().debug_annotations(0);
+    REQUIRE(root.has_name_iid());
+    REQUIRE(root.dict_entries_size() == 2);
+
+    const auto& label = root.dict_entries(0);
+    REQUIRE(label.has_name_iid());
+    REQUIRE(label.has_string_value_iid());
+
+    const auto& child = root.dict_entries(1);
+    REQUIRE(child.has_name_iid());
+    REQUIRE(child.dict_entries_size() == 2);
+    REQUIRE(child.dict_entries(0).has_name_iid());
+    REQUIRE(child.dict_entries(0).has_string_value_iid());
+    REQUIRE(child.dict_entries(1).has_name_iid());
+    REQUIRE(child.dict_entries(1).int_value() == 2);
 }
