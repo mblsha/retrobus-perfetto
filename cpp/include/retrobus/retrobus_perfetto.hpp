@@ -13,7 +13,6 @@
 #include <memory>
 #include <optional>
 #include <set>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -712,25 +711,13 @@ class AnnotationBuilder {
 private:
     friend class TrackEventWrapper;
     perfetto::protos::DebugAnnotation* annotation_;
-    perfetto::protos::DebugAnnotation::NestedValue* nested_;
     perfetto::protos::TracePacket* packet_;
     detail::InterningState* interning_state_;
 
-    static AnnotationBuilder for_nested(perfetto::protos::DebugAnnotation::NestedValue* nested,
-                                        perfetto::protos::TracePacket* packet,
-                                        detail::InterningState* interning_state) {
-        if (nested) {
-            nested->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
-        }
-        return AnnotationBuilder(nullptr, nested, packet, interning_state);
-    }
-
     AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation,
-                      perfetto::protos::DebugAnnotation::NestedValue* nested,
                       perfetto::protos::TracePacket* packet,
                       detail::InterningState* interning_state)
         : annotation_(annotation)
-        , nested_(nested)
         , packet_(packet)
         , interning_state_(interning_state) {}
 
@@ -747,24 +734,14 @@ private:
         return nullptr;
     }
 
-    perfetto::protos::DebugAnnotation::NestedValue* add_nested_entry(std::string_view key) {
-        if (nested_) {
-            nested_->add_dict_keys(std::string(key));
-            return nested_->add_dict_values();
-        }
-        return nullptr;
-    }
-
 public:
     explicit AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation)
-        : AnnotationBuilder(annotation, nullptr, nullptr, nullptr) {}
+        : AnnotationBuilder(annotation, nullptr, nullptr) {}
 
     // Typed annotation methods
     AnnotationBuilder& integer(std::string_view key, int64_t value) {
         if (auto* entry = add_entry(key)) {
             entry->set_int_value(value);
-        } else if (auto* nested_val = add_nested_entry(key)) {
-            nested_val->set_int_value(value);
         }
         return *this;
     }
@@ -772,8 +749,6 @@ public:
     AnnotationBuilder& floating(std::string_view key, double value) {
         if (auto* entry = add_entry(key)) {
             entry->set_double_value(value);
-        } else if (auto* nested_val = add_nested_entry(key)) {
-            nested_val->set_double_value(value);
         }
         return *this;
     }
@@ -781,8 +756,6 @@ public:
     AnnotationBuilder& boolean(std::string_view key, bool value) {
         if (auto* entry = add_entry(key)) {
             entry->set_bool_value(value);
-        } else if (auto* nested_val = add_nested_entry(key)) {
-            nested_val->set_bool_value(value);
         }
         return *this;
     }
@@ -795,8 +768,6 @@ public:
             } else {
                 entry->set_string_value(std::string(value));
             }
-        } else if (auto* nested_val = add_nested_entry(key)) {
-            nested_val->set_string_value(std::string(value));
         }
         return *this;
     }
@@ -804,11 +775,6 @@ public:
     AnnotationBuilder& pointer(std::string_view key, uint64_t address) {
         if (auto* entry = add_entry(key)) {
             entry->set_pointer_value(address);
-        } else if (auto* nested_val = add_nested_entry(key)) {
-            // NestedValue does not support pointer_value, fall back to hex string
-            std::ostringstream oss;
-            oss << "0x" << std::hex << address;
-            nested_val->set_string_value(oss.str());
         }
         return *this;
     }
@@ -816,14 +782,9 @@ public:
     // Nested annotations - creates another level
     [[nodiscard]] AnnotationBuilder nested(std::string_view key) {
         if (auto* entry = add_entry(key)) {
-            auto* nested_val = entry->mutable_nested_value();
-            return for_nested(nested_val, packet_, interning_state_);
+            return AnnotationBuilder(entry, packet_, interning_state_);
         }
-        if (auto* nested_val = add_nested_entry(key)) {
-            nested_val->set_nested_type(perfetto::protos::DebugAnnotation::NestedValue::DICT);
-            return for_nested(nested_val, packet_, interning_state_);
-        }
-        return AnnotationBuilder(nullptr, nullptr, nullptr, nullptr);
+        return AnnotationBuilder(nullptr, nullptr, nullptr);
     }
 };
 
@@ -872,7 +833,7 @@ inline AnnotationBuilder TrackEventWrapper::annotation(std::string_view name) {
     auto* annotation = event_->add_debug_annotations();
     if (interning_state_) {
         annotation->set_name_iid(interning_state_->intern_debug_annotation_name(name, packet_));
-        return AnnotationBuilder(annotation, nullptr, packet_, interning_state_);
+        return AnnotationBuilder(annotation, packet_, interning_state_);
     }
     annotation->set_name(std::string(name));
     return AnnotationBuilder(annotation);
