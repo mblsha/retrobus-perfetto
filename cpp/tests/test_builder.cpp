@@ -2,6 +2,7 @@
 #include <retrobus/retrobus_perfetto.hpp>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <unordered_map>
 #include <google/protobuf/text_format.h>
 
@@ -193,6 +194,163 @@ TEST_CASE("Counter updates", "[builder][counters]") {
         auto data = builder.serialize();
         REQUIRE(!data.empty());
     }
+}
+
+TEST_CASE("FrameTimeline events", "[builder][frame-timeline]") {
+    PerfettoTraceBuilder builder("FrameProcess", 4321);
+
+    FrameTimelineExpectedSurfaceFrameStart expected_surface;
+    expected_surface.cookie = 11;
+    expected_surface.token = 101;
+    expected_surface.display_frame_token = 201;
+    expected_surface.layer_name = "RFIRE";
+    builder.add_frame_timeline_expected_surface_start(1000,
+                                                      expected_surface);
+
+    FrameTimelineActualSurfaceFrameStart actual_surface;
+    actual_surface.cookie = 12;
+    actual_surface.token = 102;
+    actual_surface.display_frame_token = 202;
+    actual_surface.layer_name = "RFIRE";
+    actual_surface.present_type =
+        perfetto::protos::FrameTimelineEvent::PRESENT_LATE;
+    actual_surface.on_time_finish = false;
+    actual_surface.gpu_composition = true;
+    actual_surface.jank_type =
+        perfetto::protos::FrameTimelineEvent::JANK_APP_DEADLINE_MISSED;
+    actual_surface.prediction_type =
+        perfetto::protos::FrameTimelineEvent::PREDICTION_VALID;
+    actual_surface.is_buffer = true;
+    actual_surface.jank_severity_type =
+        perfetto::protos::FrameTimelineEvent::SEVERITY_FULL;
+    actual_surface.present_delay_millis = 16.6f;
+    actual_surface.vsync_resynced_jitter_millis = 0.5f;
+    actual_surface.jank_severity_score = 1.0f;
+    actual_surface.latched_fence_state = perfetto::protos::
+        FrameTimelineEvent::ActualSurfaceFrameStart::LATCHED_SIGNALED;
+    actual_surface.animation_time_millis = 33.3f;
+    builder.add_frame_timeline_actual_surface_start(1100, actual_surface);
+
+    FrameTimelineExpectedDisplayFrameStart expected_display;
+    expected_display.cookie = 21;
+    expected_display.token = 201;
+    expected_display.pid = 9999;
+    builder.add_frame_timeline_expected_display_start(1200,
+                                                      expected_display);
+
+    FrameTimelineActualDisplayFrameStart actual_display;
+    actual_display.cookie = 22;
+    actual_display.token = 202;
+    actual_display.pid = 9999;
+    actual_display.present_type =
+        perfetto::protos::FrameTimelineEvent::PRESENT_ON_TIME;
+    actual_display.on_time_finish = true;
+    actual_display.gpu_composition = false;
+    actual_display.jank_type = perfetto::protos::FrameTimelineEvent::JANK_NONE;
+    actual_display.prediction_type =
+        perfetto::protos::FrameTimelineEvent::PREDICTION_VALID;
+    actual_display.jank_severity_type =
+        perfetto::protos::FrameTimelineEvent::SEVERITY_NONE;
+    actual_display.present_delay_millis = 0.0f;
+    actual_display.latched_unsignaled_count = 2;
+    actual_display.addressable_unsignaled_latch_count = 1;
+    builder.add_frame_timeline_actual_display_start(1300, actual_display);
+
+    builder.end_frame_timeline(1400, 11);
+    builder.end_frame_timeline(1500, 12);
+    builder.end_frame_timeline(1600, 21);
+    builder.end_frame_timeline(1700, 22);
+
+    perfetto::protos::Trace trace;
+    const auto data = builder.serialize();
+    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+
+    bool saw_expected_surface = false;
+    bool saw_actual_surface = false;
+    bool saw_expected_display = false;
+    bool saw_actual_display = false;
+    std::set<int64_t> end_cookies;
+
+    for (const auto& packet : trace.packet()) {
+        if (!packet.has_frame_timeline_event()) {
+            continue;
+        }
+        const auto& event = packet.frame_timeline_event();
+        switch (event.event_case()) {
+        case perfetto::protos::FrameTimelineEvent::kExpectedSurfaceFrameStart: {
+            const auto& frame = event.expected_surface_frame_start();
+            REQUIRE(packet.timestamp() == 1000);
+            REQUIRE(frame.cookie() == 11);
+            REQUIRE(frame.token() == 101);
+            REQUIRE(frame.display_frame_token() == 201);
+            REQUIRE(frame.pid() == 4321);
+            REQUIRE(frame.layer_name() == "RFIRE");
+            saw_expected_surface = true;
+            break;
+        }
+        case perfetto::protos::FrameTimelineEvent::kActualSurfaceFrameStart: {
+            const auto& frame = event.actual_surface_frame_start();
+            REQUIRE(packet.timestamp() == 1100);
+            REQUIRE(frame.cookie() == 12);
+            REQUIRE(frame.token() == 102);
+            REQUIRE(frame.display_frame_token() == 202);
+            REQUIRE(frame.pid() == 4321);
+            REQUIRE(frame.present_type() ==
+                    perfetto::protos::FrameTimelineEvent::PRESENT_LATE);
+            REQUIRE_FALSE(frame.on_time_finish());
+            REQUIRE(frame.gpu_composition());
+            REQUIRE(frame.jank_type() ==
+                    perfetto::protos::FrameTimelineEvent::
+                        JANK_APP_DEADLINE_MISSED);
+            REQUIRE(frame.prediction_type() ==
+                    perfetto::protos::FrameTimelineEvent::PREDICTION_VALID);
+            REQUIRE(frame.jank_severity_type() ==
+                    perfetto::protos::FrameTimelineEvent::SEVERITY_FULL);
+            REQUIRE(frame.latched_fence_state() ==
+                    perfetto::protos::FrameTimelineEvent::
+                        ActualSurfaceFrameStart::LATCHED_SIGNALED);
+            saw_actual_surface = true;
+            break;
+        }
+        case perfetto::protos::FrameTimelineEvent::kExpectedDisplayFrameStart: {
+            const auto& frame = event.expected_display_frame_start();
+            REQUIRE(packet.timestamp() == 1200);
+            REQUIRE(frame.cookie() == 21);
+            REQUIRE(frame.token() == 201);
+            REQUIRE(frame.pid() == 9999);
+            saw_expected_display = true;
+            break;
+        }
+        case perfetto::protos::FrameTimelineEvent::kActualDisplayFrameStart: {
+            const auto& frame = event.actual_display_frame_start();
+            REQUIRE(packet.timestamp() == 1300);
+            REQUIRE(frame.cookie() == 22);
+            REQUIRE(frame.token() == 202);
+            REQUIRE(frame.pid() == 9999);
+            REQUIRE(frame.present_type() ==
+                    perfetto::protos::FrameTimelineEvent::PRESENT_ON_TIME);
+            REQUIRE(frame.on_time_finish());
+            REQUIRE_FALSE(frame.gpu_composition());
+            REQUIRE(frame.jank_type() ==
+                    perfetto::protos::FrameTimelineEvent::JANK_NONE);
+            REQUIRE(frame.latched_unsignaled_count() == 2);
+            REQUIRE(frame.addressable_unsignaled_latch_count() == 1);
+            saw_actual_display = true;
+            break;
+        }
+        case perfetto::protos::FrameTimelineEvent::kFrameEnd:
+            end_cookies.insert(event.frame_end().cookie());
+            break;
+        case perfetto::protos::FrameTimelineEvent::EVENT_NOT_SET:
+            break;
+        }
+    }
+
+    REQUIRE(saw_expected_surface);
+    REQUIRE(saw_actual_surface);
+    REQUIRE(saw_expected_display);
+    REQUIRE(saw_actual_display);
+    REQUIRE(end_cookies == std::set<int64_t>{11, 12, 21, 22});
 }
 
 TEST_CASE("Annotations", "[builder][annotations]") {

@@ -31,6 +31,74 @@ namespace retrobus {
 class TrackEventWrapper;
 class AnnotationBuilder;
 
+using FrameTimelinePresentType =
+    perfetto::protos::FrameTimelineEvent::PresentType;
+using FrameTimelinePredictionType =
+    perfetto::protos::FrameTimelineEvent::PredictionType;
+using FrameTimelineJankSeverityType =
+    perfetto::protos::FrameTimelineEvent::JankSeverityType;
+using FrameTimelineLatchedFenceState =
+    perfetto::protos::FrameTimelineEvent::ActualSurfaceFrameStart::
+        LatchedFenceState;
+
+struct FrameTimelineExpectedSurfaceFrameStart {
+    int64_t cookie = 0;
+    int64_t token = 0;
+    int64_t display_frame_token = 0;
+    std::optional<int32_t> pid;
+    std::string layer_name;
+};
+
+struct FrameTimelineActualSurfaceFrameStart {
+    int64_t cookie = 0;
+    int64_t token = 0;
+    int64_t display_frame_token = 0;
+    std::optional<int32_t> pid;
+    std::string layer_name;
+
+    std::optional<FrameTimelinePresentType> present_type;
+    std::optional<bool> on_time_finish;
+    std::optional<bool> gpu_composition;
+    std::optional<int32_t> jank_type;
+    std::optional<FrameTimelinePredictionType> prediction_type;
+    std::optional<bool> is_buffer;
+    std::optional<FrameTimelineJankSeverityType> jank_severity_type;
+    std::optional<float> present_delay_millis;
+    std::optional<float> vsync_resynced_jitter_millis;
+    std::optional<float> jank_severity_score;
+    std::optional<int32_t> jank_type_experimental;
+    std::optional<FrameTimelinePresentType> present_type_experimental;
+    std::optional<float> jank_debug_metadata;
+    std::optional<FrameTimelineLatchedFenceState> latched_fence_state;
+    std::optional<float> animation_time_millis;
+};
+
+struct FrameTimelineExpectedDisplayFrameStart {
+    int64_t cookie = 0;
+    int64_t token = 0;
+    std::optional<int32_t> pid;
+};
+
+struct FrameTimelineActualDisplayFrameStart {
+    int64_t cookie = 0;
+    int64_t token = 0;
+    std::optional<int32_t> pid;
+
+    std::optional<FrameTimelinePresentType> present_type;
+    std::optional<bool> on_time_finish;
+    std::optional<bool> gpu_composition;
+    std::optional<int32_t> jank_type;
+    std::optional<FrameTimelinePredictionType> prediction_type;
+    std::optional<FrameTimelineJankSeverityType> jank_severity_type;
+    std::optional<float> present_delay_millis;
+    std::optional<float> jank_severity_score;
+    std::optional<int32_t> jank_type_experimental;
+    std::optional<FrameTimelinePresentType> present_type_experimental;
+    std::optional<float> jank_debug_metadata;
+    std::optional<int64_t> latched_unsignaled_count;
+    std::optional<int64_t> addressable_unsignaled_latch_count;
+};
+
 // Utility functions
 namespace detail {
     // Default values for trace generation
@@ -301,6 +369,154 @@ public:
     
     [[nodiscard]] TrackEventWrapper add_flow(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns,
                                               uint64_t flow_id, bool terminating = false);
+
+    void add_frame_timeline_expected_surface_start(
+        uint64_t timestamp_ns,
+        const FrameTimelineExpectedSurfaceFrameStart& frame) {
+        auto* packet = create_packet(timestamp_ns);
+        auto* event = packet->mutable_frame_timeline_event()
+                          ->mutable_expected_surface_frame_start();
+        event->set_cookie(frame.cookie);
+        event->set_token(frame.token);
+        event->set_display_frame_token(frame.display_frame_token);
+        event->set_pid(frame.pid.value_or(pid_));
+        if (!frame.layer_name.empty()) {
+            event->set_layer_name(frame.layer_name);
+        }
+    }
+
+    void add_frame_timeline_actual_surface_start(
+        uint64_t timestamp_ns,
+        const FrameTimelineActualSurfaceFrameStart& frame) {
+        auto* packet = create_packet(timestamp_ns);
+        auto* event = packet->mutable_frame_timeline_event()
+                          ->mutable_actual_surface_frame_start();
+        event->set_cookie(frame.cookie);
+        event->set_token(frame.token);
+        event->set_display_frame_token(frame.display_frame_token);
+        event->set_pid(frame.pid.value_or(pid_));
+        if (!frame.layer_name.empty()) {
+            event->set_layer_name(frame.layer_name);
+        }
+        if (frame.present_type) {
+            event->set_present_type(*frame.present_type);
+        }
+        if (frame.on_time_finish) {
+            event->set_on_time_finish(*frame.on_time_finish);
+        }
+        if (frame.gpu_composition) {
+            event->set_gpu_composition(*frame.gpu_composition);
+        }
+        if (frame.jank_type) {
+            event->set_jank_type(*frame.jank_type);
+        }
+        if (frame.prediction_type) {
+            event->set_prediction_type(*frame.prediction_type);
+        }
+        if (frame.is_buffer) {
+            event->set_is_buffer(*frame.is_buffer);
+        }
+        if (frame.jank_severity_type) {
+            event->set_jank_severity_type(*frame.jank_severity_type);
+        }
+        if (frame.present_delay_millis) {
+            event->set_present_delay_millis(*frame.present_delay_millis);
+        }
+        if (frame.vsync_resynced_jitter_millis) {
+            event->set_vsync_resynced_jitter_millis(
+                *frame.vsync_resynced_jitter_millis);
+        }
+        if (frame.jank_severity_score) {
+            event->set_jank_severity_score(*frame.jank_severity_score);
+        }
+        if (frame.jank_type_experimental) {
+            event->set_jank_type_experimental(*frame.jank_type_experimental);
+        }
+        if (frame.present_type_experimental) {
+            event->set_present_type_experimental(
+                *frame.present_type_experimental);
+        }
+        if (frame.jank_debug_metadata) {
+            event->set_jank_debug_metadata(*frame.jank_debug_metadata);
+        }
+        if (frame.latched_fence_state) {
+            event->set_latched_fence_state(*frame.latched_fence_state);
+        }
+        if (frame.animation_time_millis) {
+            event->set_animation_time_millis(*frame.animation_time_millis);
+        }
+    }
+
+    void add_frame_timeline_expected_display_start(
+        uint64_t timestamp_ns,
+        const FrameTimelineExpectedDisplayFrameStart& frame) {
+        auto* packet = create_packet(timestamp_ns);
+        auto* event = packet->mutable_frame_timeline_event()
+                          ->mutable_expected_display_frame_start();
+        event->set_cookie(frame.cookie);
+        event->set_token(frame.token);
+        event->set_pid(frame.pid.value_or(pid_));
+    }
+
+    void add_frame_timeline_actual_display_start(
+        uint64_t timestamp_ns,
+        const FrameTimelineActualDisplayFrameStart& frame) {
+        auto* packet = create_packet(timestamp_ns);
+        auto* event = packet->mutable_frame_timeline_event()
+                          ->mutable_actual_display_frame_start();
+        event->set_cookie(frame.cookie);
+        event->set_token(frame.token);
+        event->set_pid(frame.pid.value_or(pid_));
+        if (frame.present_type) {
+            event->set_present_type(*frame.present_type);
+        }
+        if (frame.on_time_finish) {
+            event->set_on_time_finish(*frame.on_time_finish);
+        }
+        if (frame.gpu_composition) {
+            event->set_gpu_composition(*frame.gpu_composition);
+        }
+        if (frame.jank_type) {
+            event->set_jank_type(*frame.jank_type);
+        }
+        if (frame.prediction_type) {
+            event->set_prediction_type(*frame.prediction_type);
+        }
+        if (frame.jank_severity_type) {
+            event->set_jank_severity_type(*frame.jank_severity_type);
+        }
+        if (frame.present_delay_millis) {
+            event->set_present_delay_millis(*frame.present_delay_millis);
+        }
+        if (frame.jank_severity_score) {
+            event->set_jank_severity_score(*frame.jank_severity_score);
+        }
+        if (frame.jank_type_experimental) {
+            event->set_jank_type_experimental(*frame.jank_type_experimental);
+        }
+        if (frame.present_type_experimental) {
+            event->set_present_type_experimental(
+                *frame.present_type_experimental);
+        }
+        if (frame.jank_debug_metadata) {
+            event->set_jank_debug_metadata(*frame.jank_debug_metadata);
+        }
+        if (frame.latched_unsignaled_count) {
+            event->set_latched_unsignaled_count(
+                *frame.latched_unsignaled_count);
+        }
+        if (frame.addressable_unsignaled_latch_count) {
+            event->set_addressable_unsignaled_latch_count(
+                *frame.addressable_unsignaled_latch_count);
+        }
+    }
+
+    void end_frame_timeline(uint64_t timestamp_ns, int64_t cookie) {
+        auto* packet = create_packet(timestamp_ns);
+        packet->mutable_frame_timeline_event()
+            ->mutable_frame_end()
+            ->set_cookie(cookie);
+    }
     
     void update_counter(uint64_t track_uuid, double value, uint64_t timestamp_ns) {
         auto* packet = create_packet(timestamp_ns);
