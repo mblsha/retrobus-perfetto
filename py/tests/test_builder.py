@@ -161,22 +161,123 @@ def test_flow_events(trace_builder):
     data = trace_builder.serialize()
     trace = perfetto_pb2.Trace()
     trace.ParseFromString(data)
-    
+
     # First flow event
     flow1 = trace.packet[3]
     assert flow1.timestamp == 1000
     assert flow1.track_event.flow_ids[0] == flow_id
-    
+
     # Continue flow
     flow2 = trace.packet[4]
     assert flow2.timestamp == 2000
     assert flow2.track_event.flow_ids[0] == flow_id
-    
+
     # Terminate flow
     flow3 = trace.packet[5]
     assert flow3.timestamp == 3000
     # Terminating flows only have terminating_flow_ids, not flow_ids
     assert flow3.track_event.terminating_flow_ids[0] == flow_id
+
+
+def test_frame_timeline_events(trace_builder):
+    """Test Android-compatible FrameTimelineEvent packets."""
+    trace_builder.add_frame_timeline_expected_surface_start(
+        1000,
+        cookie=11,
+        token=101,
+        display_frame_token=201,
+        layer_name="RFIRE",
+    )
+    trace_builder.add_frame_timeline_actual_surface_start(
+        1100,
+        cookie=12,
+        token=102,
+        display_frame_token=202,
+        layer_name="RFIRE",
+        present_type=perfetto_pb2.FrameTimelineEvent.PRESENT_LATE,
+        on_time_finish=False,
+        gpu_composition=True,
+        jank_type=perfetto_pb2.FrameTimelineEvent.JANK_APP_DEADLINE_MISSED,
+        prediction_type=perfetto_pb2.FrameTimelineEvent.PREDICTION_VALID,
+        is_buffer=True,
+        jank_severity_type=perfetto_pb2.FrameTimelineEvent.SEVERITY_FULL,
+        present_delay_millis=16.6,
+        vsync_resynced_jitter_millis=0.5,
+        jank_severity_score=1.0,
+        latched_fence_state=(
+            perfetto_pb2.FrameTimelineEvent.ActualSurfaceFrameStart.LATCHED_SIGNALED
+        ),
+        animation_time_millis=33.3,
+    )
+    trace_builder.add_frame_timeline_expected_display_start(
+        1200,
+        cookie=21,
+        token=201,
+        pid=9999,
+    )
+    trace_builder.add_frame_timeline_actual_display_start(
+        1300,
+        cookie=22,
+        token=202,
+        pid=9999,
+        present_type=perfetto_pb2.FrameTimelineEvent.PRESENT_ON_TIME,
+        on_time_finish=True,
+        gpu_composition=False,
+        jank_type=perfetto_pb2.FrameTimelineEvent.JANK_NONE,
+        prediction_type=perfetto_pb2.FrameTimelineEvent.PREDICTION_VALID,
+        jank_severity_type=perfetto_pb2.FrameTimelineEvent.SEVERITY_NONE,
+        present_delay_millis=0.0,
+        latched_unsignaled_count=2,
+        addressable_unsignaled_latch_count=1,
+    )
+    for timestamp, cookie in [(1400, 11), (1500, 12), (1600, 21), (1700, 22)]:
+        trace_builder.end_frame_timeline(timestamp, cookie)
+
+    trace = perfetto_pb2.Trace()
+    trace.ParseFromString(trace_builder.serialize())
+
+    expected_surface = trace.packet[1].frame_timeline_event.expected_surface_frame_start
+    assert trace.packet[1].timestamp == 1000
+    assert expected_surface.cookie == 11
+    assert expected_surface.token == 101
+    assert expected_surface.display_frame_token == 201
+    assert expected_surface.pid == trace_builder.pid
+    assert expected_surface.layer_name == "RFIRE"
+
+    actual_surface = trace.packet[2].frame_timeline_event.actual_surface_frame_start
+    assert trace.packet[2].timestamp == 1100
+    assert actual_surface.cookie == 12
+    assert actual_surface.present_type == perfetto_pb2.FrameTimelineEvent.PRESENT_LATE
+    assert actual_surface.on_time_finish is False
+    assert actual_surface.gpu_composition is True
+    assert (
+        actual_surface.jank_type
+        == perfetto_pb2.FrameTimelineEvent.JANK_APP_DEADLINE_MISSED
+    )
+    assert (
+        actual_surface.latched_fence_state
+        == perfetto_pb2.FrameTimelineEvent.ActualSurfaceFrameStart.LATCHED_SIGNALED
+    )
+
+    expected_display = trace.packet[3].frame_timeline_event.expected_display_frame_start
+    assert expected_display.cookie == 21
+    assert expected_display.token == 201
+    assert expected_display.pid == 9999
+
+    actual_display = trace.packet[4].frame_timeline_event.actual_display_frame_start
+    assert actual_display.cookie == 22
+    assert actual_display.present_type == perfetto_pb2.FrameTimelineEvent.PRESENT_ON_TIME
+    assert actual_display.on_time_finish is True
+    assert actual_display.jank_type == perfetto_pb2.FrameTimelineEvent.JANK_NONE
+    assert actual_display.latched_unsignaled_count == 2
+    assert actual_display.addressable_unsignaled_latch_count == 1
+
+    end_cookies = {
+        packet.frame_timeline_event.frame_end.cookie
+        for packet in trace.packet[5:]
+        if packet.frame_timeline_event.HasField("frame_end")
+    }
+    assert end_cookies == {11, 12, 21, 22}
 
 
 def test_serialization(trace_builder):

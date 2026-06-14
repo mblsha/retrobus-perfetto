@@ -288,6 +288,174 @@ class PerfettoTraceBuilder:
 
         return event
 
+    def _add_frame_timeline_event(self, timestamp: int):
+        """Create a FrameTimelineEvent packet."""
+        packet = self.trace.packet.add()
+        packet.timestamp = timestamp
+        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+        return packet.frame_timeline_event
+
+    def add_frame_timeline_expected_surface_start(
+        self,
+        timestamp: int,
+        *,
+        cookie: int,
+        token: int,
+        display_frame_token: int,
+        pid: Optional[int] = None,
+        layer_name: Optional[str] = None,
+    ) -> None:
+        """Add an ExpectedSurfaceFrameStart FrameTimelineEvent packet."""
+        event = self._add_frame_timeline_event(timestamp)
+        frame = event.expected_surface_frame_start
+        frame.cookie = cookie
+        frame.token = token
+        frame.display_frame_token = display_frame_token
+        frame.pid = self.pid if pid is None else pid
+        if layer_name is not None:
+            frame.layer_name = layer_name
+
+    def add_frame_timeline_actual_surface_start(
+        self,
+        timestamp: int,
+        *,
+        cookie: int,
+        token: int,
+        display_frame_token: int,
+        pid: Optional[int] = None,
+        layer_name: Optional[str] = None,
+        present_type: Optional[int] = None,
+        on_time_finish: Optional[bool] = None,
+        gpu_composition: Optional[bool] = None,
+        jank_type: Optional[int] = None,
+        prediction_type: Optional[int] = None,
+        is_buffer: Optional[bool] = None,
+        jank_severity_type: Optional[int] = None,
+        present_delay_millis: Optional[float] = None,
+        vsync_resynced_jitter_millis: Optional[float] = None,
+        jank_severity_score: Optional[float] = None,
+        jank_type_experimental: Optional[int] = None,
+        present_type_experimental: Optional[int] = None,
+        jank_debug_metadata: Optional[float] = None,
+        latched_fence_state: Optional[int] = None,
+        animation_time_millis: Optional[float] = None,
+    ) -> None:
+        """Add an ActualSurfaceFrameStart FrameTimelineEvent packet."""
+        event = self._add_frame_timeline_event(timestamp)
+        frame = event.actual_surface_frame_start
+        frame.cookie = cookie
+        frame.token = token
+        frame.display_frame_token = display_frame_token
+        frame.pid = self.pid if pid is None else pid
+        if layer_name is not None:
+            frame.layer_name = layer_name
+        if present_type is not None:
+            frame.present_type = present_type
+        if on_time_finish is not None:
+            frame.on_time_finish = on_time_finish
+        if gpu_composition is not None:
+            frame.gpu_composition = gpu_composition
+        if jank_type is not None:
+            frame.jank_type = jank_type
+        if prediction_type is not None:
+            frame.prediction_type = prediction_type
+        if is_buffer is not None:
+            frame.is_buffer = is_buffer
+        if jank_severity_type is not None:
+            frame.jank_severity_type = jank_severity_type
+        if present_delay_millis is not None:
+            frame.present_delay_millis = present_delay_millis
+        if vsync_resynced_jitter_millis is not None:
+            frame.vsync_resynced_jitter_millis = vsync_resynced_jitter_millis
+        if jank_severity_score is not None:
+            frame.jank_severity_score = jank_severity_score
+        if jank_type_experimental is not None:
+            frame.jank_type_experimental = jank_type_experimental
+        if present_type_experimental is not None:
+            frame.present_type_experimental = present_type_experimental
+        if jank_debug_metadata is not None:
+            frame.jank_debug_metadata = jank_debug_metadata
+        if latched_fence_state is not None:
+            frame.latched_fence_state = latched_fence_state
+        if animation_time_millis is not None:
+            frame.animation_time_millis = animation_time_millis
+
+    def add_frame_timeline_expected_display_start(
+        self,
+        timestamp: int,
+        *,
+        cookie: int,
+        token: int,
+        pid: Optional[int] = None,
+    ) -> None:
+        """Add an ExpectedDisplayFrameStart FrameTimelineEvent packet."""
+        event = self._add_frame_timeline_event(timestamp)
+        frame = event.expected_display_frame_start
+        frame.cookie = cookie
+        frame.token = token
+        frame.pid = self.pid if pid is None else pid
+
+    def add_frame_timeline_actual_display_start(
+        self,
+        timestamp: int,
+        *,
+        cookie: int,
+        token: int,
+        pid: Optional[int] = None,
+        present_type: Optional[int] = None,
+        on_time_finish: Optional[bool] = None,
+        gpu_composition: Optional[bool] = None,
+        jank_type: Optional[int] = None,
+        prediction_type: Optional[int] = None,
+        jank_severity_type: Optional[int] = None,
+        present_delay_millis: Optional[float] = None,
+        jank_severity_score: Optional[float] = None,
+        jank_type_experimental: Optional[int] = None,
+        present_type_experimental: Optional[int] = None,
+        jank_debug_metadata: Optional[float] = None,
+        latched_unsignaled_count: Optional[int] = None,
+        addressable_unsignaled_latch_count: Optional[int] = None,
+    ) -> None:
+        """Add an ActualDisplayFrameStart FrameTimelineEvent packet."""
+        event = self._add_frame_timeline_event(timestamp)
+        frame = event.actual_display_frame_start
+        frame.cookie = cookie
+        frame.token = token
+        frame.pid = self.pid if pid is None else pid
+        if present_type is not None:
+            frame.present_type = present_type
+        if on_time_finish is not None:
+            frame.on_time_finish = on_time_finish
+        if gpu_composition is not None:
+            frame.gpu_composition = gpu_composition
+        if jank_type is not None:
+            frame.jank_type = jank_type
+        if prediction_type is not None:
+            frame.prediction_type = prediction_type
+        if jank_severity_type is not None:
+            frame.jank_severity_type = jank_severity_type
+        if present_delay_millis is not None:
+            frame.present_delay_millis = present_delay_millis
+        if jank_severity_score is not None:
+            frame.jank_severity_score = jank_severity_score
+        if jank_type_experimental is not None:
+            frame.jank_type_experimental = jank_type_experimental
+        if present_type_experimental is not None:
+            frame.present_type_experimental = present_type_experimental
+        if jank_debug_metadata is not None:
+            frame.jank_debug_metadata = jank_debug_metadata
+        if latched_unsignaled_count is not None:
+            frame.latched_unsignaled_count = latched_unsignaled_count
+        if addressable_unsignaled_latch_count is not None:
+            frame.addressable_unsignaled_latch_count = (
+                addressable_unsignaled_latch_count
+            )
+
+    def end_frame_timeline(self, timestamp: int, cookie: int) -> None:
+        """Add a FrameTimelineEvent FrameEnd packet."""
+        event = self._add_frame_timeline_event(timestamp)
+        event.frame_end.cookie = cookie
+
     def serialize(self) -> bytes:
         """
         Serialize the trace to Perfetto binary format.
