@@ -119,6 +119,21 @@ Summarize function call slices (typically on the `Functions` track) into a compa
 ./perfetto_function_trace_summary.py trace.perfetto-trace --track Functions --name-map path/to/bnida.json
 ```
 
+### 5. perfetto_trace_prepare_render.py
+
+Normalize a trace to timestamp zero and add a synthetic slice spanning its full
+duration. This gives timeline renderers an explicit full-width anchor and avoids
+unused space before the first real event.
+
+```bash
+python tools/perfetto_trace_prepare_render.py input.perfetto-trace \
+  --out prepared.perfetto-trace
+```
+
+Both transformations can be disabled independently with `--no-normalize-start`
+and `--no-synthetic-span`. Running the tool repeatedly replaces its previous
+synthetic span instead of accumulating duplicate tracks.
+
 ## Customization
 
 ### Adapting for Different CPU Architectures
