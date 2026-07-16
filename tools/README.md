@@ -134,6 +134,46 @@ Both transformations can be disabled independently with `--no-normalize-start`
 and `--no-synthetic-span`. Running the tool repeatedly replaces its previous
 synthetic span instead of accumulating duplicate tracks.
 
+### 6. perfetto_trace_oracle.py
+
+Stream one or more Perfetto trace files into a SQLite index, verify function
+call integrity, and materialize a compact invocation-oriented oracle export in
+the same database.
+
+**Features:**
+- Streams `TracePacket` payloads directly from the top-level wrapper instead of
+  loading the whole `.perfetto-trace` with `Trace.ParseFromString`
+- Accepts multiple input files in capture order for split trace chunks
+- Builds queryable `packets`, `track_events`, `frame_events`,
+  `oracle_invocations`, and `verification_issues` tables
+- Pairs real slice entries/exits, stitches `event_kind=synthetic_chunk_reopen`
+  continuations, and reports malformed or final in-flight calls
+- Validates temporal-sequence monotonicity plus frame/VSync boundary issues
+
+**Usage:**
+```bash
+# Build the SQLite index only
+python tools/perfetto_trace_oracle.py index trace.perfetto-trace \
+  --index trace.sqlite
+
+# Build and verify a split trace in chunk order
+python tools/perfetto_trace_oracle.py index chunk-000.perfetto-trace \
+  chunk-001.perfetto-trace \
+  --index trace.sqlite \
+  --verify
+
+# Re-run verification/export on an existing index
+python tools/perfetto_trace_oracle.py verify --index trace.sqlite
+```
+
+The `verify` pass refreshes:
+- `oracle_invocations`: one row per invocation with function name/address,
+  callsite, frame/VSync, temporal sequence, entry registers, real-exit
+  registers/`eflags`/`eip`, and side-effect/provenance JSON where present
+- `verification_issues`: integrity findings such as missing exit probes,
+  unexpected slice ends, unmatched synthetic reopens, temporal regressions, and
+  frame cookie mismatches
+
 ## Customization
 
 ### Adapting for Different CPU Architectures

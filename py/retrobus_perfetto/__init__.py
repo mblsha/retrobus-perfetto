@@ -10,6 +10,13 @@ to the official Perfetto Python SDK for better compatibility and features.
 
 from .builder import PerfettoTraceBuilder
 from .annotations import DebugAnnotationBuilder, TrackEventWrapper
+from .oracle_index import (
+    IndexStats,
+    VerifyStats,
+    build_trace_index,
+    iter_trace_packets,
+    verify_trace_index,
+)
 from .reader import resolve_interned_trace
 
 # Make proto module available for direct import
@@ -19,7 +26,12 @@ __version__ = "0.3.1"
 __all__ = [
     "PerfettoTraceBuilder",
     "DebugAnnotationBuilder",
+    "IndexStats",
     "TrackEventWrapper",
+    "VerifyStats",
+    "build_trace_index",
+    "iter_trace_packets",
     "resolve_interned_trace",
+    "verify_trace_index",
     "proto",
 ]

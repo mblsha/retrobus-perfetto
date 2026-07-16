@@ -20,6 +20,8 @@ This is a multi-language project with implementations in different languages:
 - **Multiple Track Types**: Threads, counters, and flow events
 - **String Interning (default)**: Smaller traces via `TracePacket.interned_data` dictionaries
 - **Direct Protobuf**: Uses protobuf directly for maximum control
+- **Streaming Oracle Indexing**: Query large traces through SQLite without
+  whole-trace `ParseFromString`
 
 ## Python Installation
 
@@ -114,6 +116,23 @@ Generated traces can be viewed at [ui.perfetto.dev](https://ui.perfetto.dev):
 1. Open the Perfetto UI
 2. Click "Open trace file" 
 3. Select your `.perfetto-trace` file
+
+## Streaming Oracle Index
+
+For large parity captures, stream one or more trace files into a SQLite index
+instead of loading the entire `.perfetto-trace` into a single protobuf object:
+
+```bash
+python tools/perfetto_trace_oracle.py index trace.perfetto-trace \
+  --index trace.sqlite \
+  --verify
+```
+
+The `verify` pass also materializes `oracle_invocations`, a compact
+invocation-oriented export with function name/address, callsite, frame/VSync,
+temporal sequence, entry registers, real-exit registers/`eflags`/`eip`, and
+provenance JSON. Split trace chunks are supported by passing multiple input
+files in capture order.
 
 ## Contributing
 
