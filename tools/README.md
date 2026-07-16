@@ -149,6 +149,8 @@ the same database.
 - Pairs real slice entries/exits, stitches `event_kind=synthetic_chunk_reopen`
   continuations, and reports malformed or final in-flight calls
 - Validates temporal-sequence monotonicity plus frame/VSync boundary issues
+- Rejects input/output path collisions and publishes completed indexes
+  atomically, so a failed parse does not replace an existing index
 
 **Usage:**
 ```bash
@@ -169,10 +171,35 @@ python tools/perfetto_trace_oracle.py verify --index trace.sqlite
 The `verify` pass refreshes:
 - `oracle_invocations`: one row per invocation with function name/address,
   callsite, frame/VSync, temporal sequence, entry registers, real-exit
-  registers/`eflags`/`eip`, and side-effect/provenance JSON where present
+  registers/`eflags`/actual `eip`, expected return address, stable `call_id` /
+  `enter_index`, and side-effect/provenance JSON where present
 - `verification_issues`: integrity findings such as missing exit probes,
-  unexpected slice ends, unmatched synthetic reopens, temporal regressions, and
-  frame cookie mismatches
+  duplicate exits, unexpected slice ends, unmatched synthetic reopens, packet
+  loss, unresolved interning, temporal regressions, and frame cookie mismatches
+
+The index recognizes producer-neutral aliases including `temporal_seq` /
+`temporal_sequence` / `idx`, `frame` / `frame_index`, `vsync` /
+`vsync_counter`, `function_addr`, `callsite`, `call_id`, and `enter_idx`.
+Raw annotations and their interning provenance remain available alongside the
+derived columns. For example:
+
+```bash
+sqlite3 -json trace.sqlite '
+  SELECT function_name, function_address, callsite_address,
+         call_id, enter_index, frame_index, vsync_counter,
+         entry_sequence, exit_sequence, entry_registers_json,
+         exit_registers_json, exit_eflags, exit_eip, return_address,
+         side_effects_json, provenance_json
+  FROM oracle_invocations
+  WHERE terminal_close_kind = "real_exit"
+  ORDER BY entry_global_packet_ordinal;
+'
+```
+
+`terminal_close_kind` distinguishes `real_exit`, `missing_exit`,
+`missing_reopen`, `missing_slice_end`, `missing_chunk_close`, `in_flight`, and
+`synthetic_close_in_flight`. Synthetic reopen records never create invocation
+rows by themselves.
 
 ## Customization
 

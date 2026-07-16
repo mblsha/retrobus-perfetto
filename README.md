@@ -132,7 +132,14 @@ The `verify` pass also materializes `oracle_invocations`, a compact
 invocation-oriented export with function name/address, callsite, frame/VSync,
 temporal sequence, entry registers, real-exit registers/`eflags`/`eip`, and
 provenance JSON. Split trace chunks are supported by passing multiple input
-files in capture order.
+files in capture order. The output is published atomically, and the command
+refuses to use a trace source itself as the SQLite output path.
+
+Opaque protobuf `uint64` identifiers such as track UUIDs and call IDs are stored
+as decimal text so their full range is preserved. Address and counter columns
+use SQLite integers; unsigned values above `INT64_MAX` retain their bit pattern
+using signed two's-complement representation, as recorded in the `metadata`
+table.
 
 ## Contributing
 

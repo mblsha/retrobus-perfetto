@@ -12,6 +12,7 @@ from .builder import PerfettoTraceBuilder
 from .annotations import DebugAnnotationBuilder, TrackEventWrapper
 from .oracle_index import (
     IndexStats,
+    TracePacketRecord,
     VerifyStats,
     build_trace_index,
     iter_trace_packets,
@@ -27,6 +28,7 @@ __all__ = [
     "PerfettoTraceBuilder",
     "DebugAnnotationBuilder",
     "IndexStats",
+    "TracePacketRecord",
     "TrackEventWrapper",
     "VerifyStats",
     "build_trace_index",

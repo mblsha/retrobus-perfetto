@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sqlite3
 
 from retrobus_perfetto.oracle_index import (
     build_trace_index,
@@ -18,7 +19,7 @@ def _index_command(args: argparse.Namespace) -> int:
         "indexed "
         f"{stats.packet_count} packets "
         f"({stats.track_event_count} track events, {stats.frame_event_count} frame events) "
-        f"from {stats.source_count} trace source(s) into {stats.index}"
+        f"from {stats.source_count} trace source(s) into {stats.index_path}"
     )
     if args.verify:
         verify_stats = verify_trace_index(args.index)
@@ -104,7 +105,11 @@ def main() -> int:
     verify_parser.set_defaults(func=_verify_command)
 
     args = parser.parse_args()
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        parser.error(str(exc))
+        return 2
 
 
 if __name__ == "__main__":
