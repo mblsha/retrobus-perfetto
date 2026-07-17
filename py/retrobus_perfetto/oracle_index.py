@@ -86,6 +86,8 @@ TRACK_EVENT_TYPE_NAMES = {
     perfetto.TrackEvent.TYPE_INSTANT: "instant",
     perfetto.TrackEvent.TYPE_COUNTER: "counter",
 }
+CALL_EVENT_KINDS = frozenset(("call_enter", "call_exit", "synthetic_chunk_reopen"))
+LEGACY_CALL_TRACK_NAMES = frozenset(("function execution",))
 FRAME_EVENT_TYPE_NAMES = (
     ("expected_surface_frame_start", "expected_surface_frame_start"),
     ("actual_surface_frame_start", "actual_surface_frame_start"),
@@ -163,6 +165,7 @@ class _OpenInvocation:
     call_id: _DerivedScalar
     enter_index: _DerivedScalar
     function_name_key: str | None
+    trace_provenance: dict[str, Any]
     is_real_entry: bool = True
     synthetic_close_event_ids: list[int] = field(default_factory=list)
     synthetic_reopen_event_ids: list[int] = field(default_factory=list)
@@ -1114,6 +1117,7 @@ def _finalize_invocation(
         "entry_packet_id": invocation.entry_packet_id,
         "exit_packet_id": invocation.exit_packet_id,
         "terminal_close_packet_id": invocation.terminal_close_packet_id,
+        "trace_provenance": invocation.trace_provenance,
     }
     cursor = conn.execute(
         """
@@ -1308,7 +1312,20 @@ def verify_trace_index(index_path: Path | str) -> VerifyStats:
 
             open_stacks: dict[str, list[_OpenInvocation]] = {}
             pending_reopens: dict[str, list[_OpenInvocation]] = {}
+            call_tracks: set[tuple[int, str]] = set()
             current_source_id: int | None = None
+            trace_provenance_by_source = {
+                int(source_id): value
+                for source_id, annotations_json in conn.execute(
+                    """
+                    SELECT source_id, annotations_json
+                    FROM track_events
+                    WHERE event_kind = 'trace_provenance'
+                    ORDER BY global_packet_ordinal, event_id
+                    """
+                )
+                if isinstance((value := _load_json(annotations_json)), dict)
+            }
 
             for row in conn.execute(
                 """
@@ -1484,6 +1501,16 @@ def verify_trace_index(index_path: Path | str) -> VerifyStats:
                         )
                     last_temporal_sequences[temporal_key] = temporal_sequence
 
+                is_explicit_call_event = event_kind in CALL_EVENT_KINDS
+                is_legacy_call_track = (
+                    track_name.casefold() in LEGACY_CALL_TRACK_NAMES
+                )
+                call_track = (source_id, track_uuid)
+                if is_explicit_call_event or is_legacy_call_track:
+                    call_tracks.add(call_track)
+                if call_track not in call_tracks:
+                    continue
+
                 def new_invocation(*, is_real_entry: bool) -> _OpenInvocation:
                     return _OpenInvocation(
                         track_uuid=track_uuid,
@@ -1549,6 +1576,7 @@ def verify_trace_index(index_path: Path | str) -> VerifyStats:
                             derived_provenance.get("enter_index_key"),
                         ),
                         function_name_key=derived_provenance.get("function_name_key"),
+                        trace_provenance=trace_provenance_by_source.get(source_id, {}),
                         is_real_entry=is_real_entry,
                     )
 

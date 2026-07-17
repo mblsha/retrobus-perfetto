@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import subprocess
 import sys
@@ -136,6 +137,31 @@ def test_oracle_index_pairs_nested_recursion(tmp_path: Path) -> None:
     assert [row["terminal_close_kind"] for row in rows] == ["real_exit", "real_exit"]
     assert rows[0]["exit_eflags"] == 0x246
     assert rows[1]["exit_eip"] == 0x3000
+
+
+def test_oracle_index_ignores_duration_slices_on_non_call_tracks(tmp_path: Path) -> None:
+    trace_path = tmp_path / "mixed.perfetto-trace"
+    builder = PerfettoTraceBuilder("TestProcess", encoding="interned")
+    files = builder.add_thread("Files")
+    functions = builder.add_thread("Function execution")
+
+    builder.begin_slice(files, "read asset", 5)
+    builder.end_slice(files, 6)
+    entry = builder.begin_slice(functions, "fn", 10)
+    entry.add_annotations({"event_kind": "call_enter", "idx": 1})
+    _exit_event(builder, functions, "fn", 20, idx=2, eip=3, return_eip=3)
+    builder.end_slice(functions, 21)
+    _write_builder_trace(trace_path, builder)
+
+    index_path = tmp_path / "mixed.sqlite"
+    build_trace_index([trace_path], index_path)
+    stats = verify_trace_index(index_path)
+
+    assert stats.issue_count == 0
+    assert stats.invocation_count == 1
+    assert _rows(index_path, "SELECT function_name FROM oracle_invocations")[0][
+        "function_name"
+    ] == "fn"
 
 
 def test_oracle_index_stitches_synthetic_chunk_reopens(tmp_path: Path) -> None:
@@ -350,6 +376,17 @@ def test_oracle_index_preserves_producer_contract_and_provenance(tmp_path: Path)
     trace_path = tmp_path / "producer.perfetto-trace"
     builder = PerfettoTraceBuilder("TestProcess", encoding="interned")
     functions = builder.add_thread("Function execution")
+    metadata = builder.add_thread("Trace metadata")
+
+    provenance = builder.add_instant_event(metadata, "trace_provenance", 5)
+    provenance.add_annotations(
+        {
+            "event_kind": "trace_provenance",
+            "manifest_identity": "intro-full-entry",
+            "executable_sha256": "0123456789abcdef",
+            "dosbox_build_git_hash": "producer-revision",
+        }
+    )
 
     entry = builder.begin_slice(functions, "fn_contract", 10)
     entry.add_annotations(
@@ -414,6 +451,10 @@ def test_oracle_index_preserves_producer_contract_and_provenance(tmp_path: Path)
     assert '"side_effect_memory":"0x400..0x40f"' in row["side_effects_json"]
     assert '"function_address_key":"function_addr"' in row["provenance_json"]
     assert '"entry_sequence_key":"temporal_seq"' in row["provenance_json"]
+    run_provenance = json.loads(row["provenance_json"])["trace_provenance"]
+    assert run_provenance["manifest_identity"] == "intro-full-entry"
+    assert run_provenance["executable_sha256"] == "0123456789abcdef"
+    assert run_provenance["dosbox_build_git_hash"] == "producer-revision"
 
 
 def test_oracle_index_rejects_malformed_exit_lifecycle(tmp_path: Path) -> None:

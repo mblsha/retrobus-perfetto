@@ -172,7 +172,8 @@ The `verify` pass refreshes:
 - `oracle_invocations`: one row per invocation with function name/address,
   callsite, frame/VSync, temporal sequence, entry registers, real-exit
   registers/`eflags`/actual `eip`, expected return address, stable `call_id` /
-  `enter_index`, and side-effect/provenance JSON where present
+  `enter_index`, and side-effect/provenance JSON where present, including the
+  producer's run-level `trace_provenance` payload
 - `verification_issues`: integrity findings such as missing exit probes,
   duplicate exits, unexpected slice ends, unmatched synthetic reopens, packet
   loss, unresolved interning, temporal regressions, and frame cookie mismatches
@@ -182,6 +183,11 @@ The index recognizes producer-neutral aliases including `temporal_seq` /
 `vsync_counter`, `function_addr`, `callsite`, `call_id`, and `enter_idx`.
 Raw annotations and their interning provenance remain available alongside the
 derived columns. For example:
+
+Call reconstruction uses explicit `call_enter`, `call_exit`, and
+`synthetic_chunk_reopen` event kinds. For compatibility, untagged call slices
+are also recognized on a track named `Function execution`; slices on all other
+tracks are excluded from invocation lifecycle checks.
 
 ```bash
 sqlite3 -json trace.sqlite '

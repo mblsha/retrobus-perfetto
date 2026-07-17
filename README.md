@@ -131,9 +131,16 @@ python tools/perfetto_trace_oracle.py index trace.perfetto-trace \
 The `verify` pass also materializes `oracle_invocations`, a compact
 invocation-oriented export with function name/address, callsite, frame/VSync,
 temporal sequence, entry registers, real-exit registers/`eflags`/`eip`, and
-provenance JSON. Split trace chunks are supported by passing multiple input
-files in capture order. The output is published atomically, and the command
-refuses to use a trace source itself as the SQLite output path.
+provenance JSON. Producer `trace_provenance` annotations are embedded in that
+JSON so compact rows retain executable, manifest, symbol-map, and producer
+identity. Split trace chunks are supported by passing multiple input files in
+capture order. The output is published atomically, and the command refuses to
+use a trace source itself as the SQLite output path.
+
+Only slices tagged as call lifecycle events participate in invocation
+verification. Untagged traces remain compatible when calls use the canonical
+`Function execution` track; duration slices on Files, VSync, rendering, or
+other tracks stay queryable as raw events without becoming function calls.
 
 Opaque protobuf `uint64` identifiers such as track UUIDs and call IDs are stored
 as decimal text so their full range is preserved. Address and counter columns
