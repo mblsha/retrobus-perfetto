@@ -1775,6 +1775,24 @@ def verify_trace_index(index_path: Path | str) -> VerifyStats:
                         temporal_sequence,
                         derived_provenance.get("temporal_sequence_key"),
                     )
+                    if (
+                        invocation.function_address.value is None
+                        and function_address_value is not None
+                    ):
+                        invocation.function_address = _event_scalar(
+                            function_address_value,
+                            derived_provenance,
+                            "function_address_key",
+                        )
+                    if (
+                        invocation.callsite_address.value is None
+                        and callsite_address_value is not None
+                    ):
+                        invocation.callsite_address = _event_scalar(
+                            callsite_address_value,
+                            derived_provenance,
+                            "callsite_address_key",
+                        )
                     invocation.return_address = _event_scalar(
                         return_address_value,
                         derived_provenance,

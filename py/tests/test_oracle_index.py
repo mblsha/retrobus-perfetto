@@ -398,7 +398,6 @@ def test_oracle_index_preserves_producer_contract_and_provenance(tmp_path: Path)
             "function_name": "fn_contract",
             "function_addr": 0x100,
             "entry_eip": 0x170100,
-            "callsite": 0x200,
             "frame": 5,
             "vsync": 20,
             "side_effect_memory": "0x400..0x40f",
@@ -414,6 +413,7 @@ def test_oracle_index_preserves_producer_contract_and_provenance(tmp_path: Path)
         call_id=7,
         enter_idx=3,
         function_addr=0x100,
+        callsite=0x200,
         return_eip=0x300,
         eip=0x301,
         frame=5,
@@ -450,6 +450,7 @@ def test_oracle_index_preserves_producer_contract_and_provenance(tmp_path: Path)
     assert (row["return_address"], row["exit_eip"]) == (0x300, 0x301)
     assert '"side_effect_memory":"0x400..0x40f"' in row["side_effects_json"]
     assert '"function_address_key":"function_addr"' in row["provenance_json"]
+    assert '"callsite_address_key":"callsite"' in row["provenance_json"]
     assert '"entry_sequence_key":"temporal_seq"' in row["provenance_json"]
     run_provenance = json.loads(row["provenance_json"])["trace_provenance"]
     assert run_provenance["manifest_identity"] == "intro-full-entry"
