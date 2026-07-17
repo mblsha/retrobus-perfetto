@@ -18,16 +18,16 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v8.3.2
       with:
         enable-cache: true
     - name: Set up Python
       run: uv python install 3.12
     - name: Install dependencies
       run: |
-        uv sync --all-extras
+        uv sync --all-extras --locked
     - name: Run Ruff
       run: |
         uv run ruff check .
@@ -36,16 +36,16 @@ jobs:
     name: type-check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v8.3.2
       with:
         enable-cache: true
     - name: Set up Python
       run: uv python install 3.12
     - name: Install dependencies
       run: |
-        uv sync --all-extras
+        uv sync --all-extras --locked
     - name: Run MyPy
       run: |
         uv run mypy retrobus_perfetto --config-file mypy.ini
@@ -54,9 +54,9 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v8.3.2
       with:
         enable-cache: true
     - name: Set up Python
@@ -67,7 +67,7 @@ jobs:
         sudo apt-get install -y protobuf-compiler
     - name: Install Python dependencies
       run: |
-        uv sync --all-extras
+        uv sync --all-extras --locked
     - name: Generate protobuf files
       run: |
         uv run python -m grpc_tools.protoc \
@@ -78,18 +78,18 @@ jobs:
       run: |
         uv run pytest --cov=retrobus_perfetto --cov-report=xml --cov-report=term
     - name: Upload coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v7
       with:
-        file: py/coverage.xml
+        files: py/coverage.xml
         fail_ci_if_error: false
 
   example-test:
     name: Example Test
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v8.3.2
       with:
         enable-cache: true
     - name: Set up Python
@@ -100,7 +100,7 @@ jobs:
         sudo apt-get install -y protobuf-compiler
     - name: Install package
       run: |
-        uv sync --all-extras
+        uv sync --all-extras --locked
     - name: Generate protobuf files
       run: |
         uv run python -m grpc_tools.protoc \
@@ -113,7 +113,7 @@ jobs:
         # Verify the trace file was created
         test -f trace.perfetto-trace
     - name: Upload trace artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: python-interned-trace
         path: py/trace.perfetto-trace
@@ -124,16 +124,16 @@ jobs:
     name: Build Package
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v8.3.2
       with:
         enable-cache: true
     - name: Set up Python
       run: uv python install 3.12
     - name: Install build dependencies
       run: |
-        uv sync --all-extras
+        uv sync --all-extras --locked
     - name: Build package
       run: |
         uv build
@@ -141,7 +141,7 @@ jobs:
       run: |
         uv run twine check dist/*
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dist
         path: py/dist/
@@ -150,9 +150,9 @@ jobs:
     name: Protobuf Compilation Test
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v8.3.2
       with:
         enable-cache: true
     - name: Set up Python

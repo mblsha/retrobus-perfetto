@@ -7,16 +7,12 @@ name = "retrobus-perfetto"
 version = "0.3.1"
 description = "A minimal Perfetto trace generation library for retrocomputer emulators"
 readme = "README.md"
-authors = [
-    {name = "Your Name", email = "your.email@example.com"}
-]
-license = {text = "MIT"}
+license = "MIT"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Debuggers",
     "Topic :: System :: Emulators",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -41,8 +37,8 @@ dev = [
 ]
 
 [project.urls]
-"Bug Reports" = "https://github.com/yourusername/retrobus-perfetto/issues"
-"Source" = "https://github.com/yourusername/retrobus-perfetto"
+"Bug Reports" = "https://github.com/mblsha/retrobus-perfetto/issues"
+"Source" = "https://github.com/mblsha/retrobus-perfetto"
 
 [tool.setuptools]
 packages = ["retrobus_perfetto", "retrobus_perfetto.proto"]
