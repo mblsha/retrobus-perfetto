@@ -6,6 +6,7 @@ from pathlib import Path
 
 from setuptools.command.build_py import build_py
 from setuptools.command.develop import develop
+from setuptools.command.sdist import sdist
 
 
 class BuildProtoCommand:
@@ -24,10 +25,16 @@ class BuildProtoCommand:
         # Create __init__.py in proto directory
         (proto_out / "__init__.py").write_text("")
         proto_file = proto_path / "perfetto.proto"
+        generated_file = proto_out / "perfetto_pb2.py"
 
         if not proto_file.exists():
-            print(f"Warning: {proto_file} not found, skipping protobuf compilation")
-            return
+            if generated_file.exists():
+                print(f"Using bundled protobuf binding {generated_file}")
+                return
+            raise FileNotFoundError(
+                f"Neither {proto_file} nor {generated_file} exists; "
+                "cannot build a usable package"
+            )
 
         print(f"Compiling {proto_file}...")
 
@@ -72,6 +79,14 @@ class BuildPyCommand(build_py, BuildProtoCommand):
 
 class DevelopCommand(develop, BuildProtoCommand):
     """Custom develop command that compiles protos."""
+
+    def run(self):
+        self.run_protoc()
+        super().run()
+
+
+class SdistCommand(sdist, BuildProtoCommand):
+    """Generate protobuf bindings before assembling the source distribution."""
 
     def run(self):
         self.run_protoc()

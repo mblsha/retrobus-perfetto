@@ -23,7 +23,7 @@ jobs:
         cxx: [g++, clang++]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install dependencies
       run: |
@@ -61,7 +61,7 @@ jobs:
         test -f z80_emulation.perfetto-trace
     - name: Upload trace artifacts
       if: ${{ matrix.build_type == 'Release' && matrix.cxx == 'clang++' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: cpp-interned-traces
         path: |
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install dependencies
       run: |
@@ -137,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Check README exists
       run: test -f README.md
