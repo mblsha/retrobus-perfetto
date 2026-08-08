@@ -167,8 +167,12 @@ The canonical JSON schema has this minimum shape:
 Supported event kinds are `slice`, `instant`, `counter`, `flow_start`,
 `flow_step`, `flow_end`, `async_begin`, and `async_end`. Flow and asynchronous
 events name their correlation argument with `correlation_argument`. Schemas
-are immutable: do not reuse an event ID or reorder its arguments. Make an
-intentional schema-version change instead.
+may set `id_argument` to reconstruct the numeric event ID as a Perfetto debug
+annotation and may define typed `constant_arguments`. Both are restored solely
+on the host and consume no target-buffer bytes. They are useful when an event
+ID already carries a dispatch number or when an ABI value is fixed by the
+schema. Schemas are immutable: do not reuse an event ID or reorder its stored
+arguments. Make an intentional schema-version change instead.
 
 ## Resource and safety contract
 

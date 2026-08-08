@@ -13,6 +13,7 @@ from .annotations import TrackEventWrapper
 from .builder import PerfettoTraceBuilder
 from .compact_schema import (
     CompactArgumentSchema,
+    CompactConstantArgumentSchema,
     CompactEventSchema,
     CompactSchema,
 )
@@ -691,20 +692,38 @@ def _add_category(wrapper: TrackEventWrapper, category: str) -> None:
         wrapper.event.categories.append(category)
 
 
+def _add_typed_annotation(
+    wrapper: TrackEventWrapper,
+    specification: CompactArgumentSchema | CompactConstantArgumentSchema,
+    value: Any,
+) -> None:
+    annotation = wrapper.event.debug_annotations.add()
+    annotation.name = specification.name
+    if specification.type == "bool":
+        annotation.bool_value = value
+    elif specification.type == "float64":
+        annotation.double_value = value
+    elif specification.type == "fixed64" or (
+        specification.type == "uint" and value > 0x7FFF_FFFF_FFFF_FFFF
+    ):
+        annotation.pointer_value = value
+    else:
+        annotation.int_value = value
+
+
 def _add_arguments(wrapper: TrackEventWrapper, record: CompactRecord) -> None:
-    for specification, value in zip(record.event.arguments, record.arguments):
+    if record.event.id_argument is not None:
         annotation = wrapper.event.debug_annotations.add()
-        annotation.name = specification.name
-        if specification.type == "bool":
-            annotation.bool_value = value
-        elif specification.type == "float64":
-            annotation.double_value = value
-        elif specification.type == "fixed64" or (
-            specification.type == "uint" and value > 0x7FFF_FFFF_FFFF_FFFF
-        ):
-            annotation.pointer_value = value
-        else:
-            annotation.int_value = value
+        annotation.name = record.event.id_argument
+        annotation.int_value = record.event.id
+    for constant_specification in record.event.constant_arguments:
+        _add_typed_annotation(
+            wrapper, constant_specification, constant_specification.value
+        )
+    for stored_specification, value in zip(
+        record.event.arguments, record.arguments
+    ):
+        _add_typed_annotation(wrapper, stored_specification, value)
 
 
 def _correlation_value(record: CompactRecord) -> int:

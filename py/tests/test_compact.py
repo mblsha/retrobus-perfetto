@@ -11,6 +11,7 @@ import pytest
 
 from retrobus_perfetto import (
     CompactSchema,
+    CompactSchemaError,
     CompactTraceError,
     compact_trace_to_builder,
     read_compact_trace,
@@ -36,6 +37,10 @@ def _schema_mapping() -> dict[str, object]:
                 "name": "work",
                 "category": "runtime",
                 "kind": "slice",
+                "id_argument": "entry",
+                "constant_arguments": [
+                    {"name": "abi", "type": "uint", "value": 5}
+                ],
                 "arguments": [{"name": "amount", "type": "uint"}],
             },
             {
@@ -200,6 +205,30 @@ def test_schema_hash_and_header_are_deterministic(schema: CompactSchema) -> None
     assert ", ".join(f"0x{byte:02x}" for byte in schema.sha256) in header
 
 
+def test_schema_rejects_colliding_and_mistyped_derived_arguments() -> None:
+    mapping = _schema_mapping()
+    events = mapping["events"]
+    assert isinstance(events, list)
+    work = events[0]
+    assert isinstance(work, dict)
+    work["id_argument"] = "amount"
+    with pytest.raises(CompactSchemaError, match="collides with a stored argument"):
+        CompactSchema.from_mapping(mapping)
+
+    mapping = _schema_mapping()
+    events = mapping["events"]
+    assert isinstance(events, list)
+    work = events[0]
+    assert isinstance(work, dict)
+    constants = work["constant_arguments"]
+    assert isinstance(constants, list)
+    constant = constants[0]
+    assert isinstance(constant, dict)
+    constant["value"] = -1
+    with pytest.raises(CompactSchemaError, match="outside unsigned 64-bit"):
+        CompactSchema.from_mapping(mapping)
+
+
 def test_read_and_reconstruct_all_generic_event_kinds(
     tmp_path: Path, schema: CompactSchema
 ) -> None:
@@ -228,6 +257,8 @@ def test_read_and_reconstruct_all_generic_event_kinds(
     assert names.count("request") == 2
     assert names.count("transfer") == 1
     assert "address" in names
+    work = next(row for row in rows if row[2] == "work")
+    assert work[3] == (("entry", 1), ("abi", 5), ("amount", 42))
 
     parsed = perfetto_pb2.Trace()
     parsed.ParseFromString(builder.serialize())
