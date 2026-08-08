@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
@@ -64,6 +65,13 @@ class CompactArgumentSchema:
 
 
 @dataclass(frozen=True)
+class CompactConstantArgumentSchema:
+    name: str
+    type: str
+    value: bool | int | float
+
+
+@dataclass(frozen=True)
 class CompactTrackSchema:
     id: int
     name: str
@@ -79,6 +87,8 @@ class CompactEventSchema:
     kind: str
     arguments: tuple[CompactArgumentSchema, ...]
     correlation_argument: str | None = None
+    id_argument: str | None = None
+    constant_arguments: tuple[CompactConstantArgumentSchema, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -171,6 +181,85 @@ class CompactSchema:
                 arguments.append(CompactArgumentSchema(name=name, type=argument_type))
             if len(arguments) > 4:
                 raise CompactSchemaError(f"event {event_id} exceeds four arguments")
+
+            id_argument = event.get("id_argument")
+            if id_argument is not None:
+                id_argument = _require_text(
+                    id_argument, f"events[{index}].id_argument"
+                )
+                if id_argument in argument_names:
+                    raise CompactSchemaError(
+                        f"event {event_id} derived argument {id_argument!r} collides "
+                        "with a stored argument"
+                    )
+                argument_names.add(id_argument)
+
+            constant_arguments: list[CompactConstantArgumentSchema] = []
+            for constant_index, raw_constant in enumerate(
+                _require_sequence(
+                    event.get("constant_arguments", []),
+                    f"events[{index}].constant_arguments",
+                )
+            ):
+                constant = _require_mapping(
+                    raw_constant,
+                    f"events[{index}].constant_arguments[{constant_index}]",
+                )
+                name = _require_text(
+                    constant.get("name"),
+                    f"events[{index}].constant_arguments[{constant_index}].name",
+                )
+                if name in argument_names:
+                    raise CompactSchemaError(
+                        f"event {event_id} has duplicate or colliding argument {name!r}"
+                    )
+                argument_type = _require_text(
+                    constant.get("type"),
+                    f"events[{index}].constant_arguments[{constant_index}].type",
+                )
+                if argument_type not in ARGUMENT_TYPES:
+                    raise CompactSchemaError(
+                        f"event {event_id} has unsupported constant argument type "
+                        f"{argument_type!r}"
+                    )
+                constant_value = constant.get("value")
+                if argument_type == "bool":
+                    if not isinstance(constant_value, bool):
+                        raise CompactSchemaError(
+                            f"event {event_id} constant {name!r} must be boolean"
+                        )
+                elif argument_type == "float64":
+                    if (
+                        isinstance(constant_value, bool)
+                        or not isinstance(constant_value, (int, float))
+                        or not math.isfinite(constant_value)
+                    ):
+                        raise CompactSchemaError(
+                            f"event {event_id} constant {name!r} must be finite numeric"
+                        )
+                    constant_value = float(constant_value)
+                elif isinstance(constant_value, bool) or not isinstance(
+                    constant_value, int
+                ):
+                    raise CompactSchemaError(
+                        f"event {event_id} constant {name!r} must be an integer"
+                    )
+                elif argument_type in {"uint", "fixed64"} and not (
+                    0 <= constant_value <= 0xFFFF_FFFF_FFFF_FFFF
+                ):
+                    raise CompactSchemaError(
+                        f"event {event_id} constant {name!r} is outside unsigned 64-bit"
+                    )
+                elif argument_type == "sint" and not (
+                    -(1 << 63) <= constant_value < (1 << 63)
+                ):
+                    raise CompactSchemaError(
+                        f"event {event_id} constant {name!r} is outside signed 64-bit"
+                    )
+                argument_names.add(name)
+                constant_arguments.append(
+                    CompactConstantArgumentSchema(name, argument_type, constant_value)
+                )
             if kind == "counter" and len(arguments) != 1:
                 raise CompactSchemaError(
                     f"counter event {event_id} must have exactly one value argument"
@@ -213,6 +302,8 @@ class CompactSchema:
                 kind=kind,
                 arguments=tuple(arguments),
                 correlation_argument=correlation,
+                id_argument=id_argument,
+                constant_arguments=tuple(constant_arguments),
             )
         if not events:
             raise CompactSchemaError("at least one event is required")
