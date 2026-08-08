@@ -9,8 +9,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "retrobus-perfetto"
-version = "0.3.1"
-description = "A minimal Perfetto trace generation library for retrocomputer emulators"
+version = "0.4.0"
+description = "Perfetto generation and compact tracing for resource-constrained systems"
 readme = "README.md"
 license = "MIT"
 classifiers = [

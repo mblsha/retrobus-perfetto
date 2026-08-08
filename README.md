@@ -1,6 +1,8 @@
 # retrobus-perfetto
 
-A minimal Perfetto trace generation library for retrocomputer emulators. This project provides clean, CPU-independent APIs for creating detailed execution traces that can be visualized in the Perfetto UI.
+A producer-neutral Perfetto trace generation and reconstruction library for
+retrocomputer emulators and resource-constrained systems. It provides clean,
+CPU-independent host APIs plus an allocation-free target flight recorder.
 
 ## Project Structure
 
@@ -8,6 +10,7 @@ This is a multi-language project with implementations in different languages:
 
 - `py/` - Python implementation
 - `cpp/` - C++ header-only implementation
+- `compact/` - Allocation-free C recorder, C++ RAII wrapper, and `.rbct` format
 - `ts/` - TypeScript protobuf bindings (Node/TS, run `npm run gen:proto` in `ts/` to generate)
 - `proto/` - Shared protocol buffer definitions
 - `tools/` - Analysis tools for Perfetto traces
@@ -20,6 +23,10 @@ This is a multi-language project with implementations in different languages:
 - **Multiple Track Types**: Threads, counters, and flow events
 - **String Interning (default)**: Smaller traces via `TracePacket.interned_data` dictionaries
 - **Direct Protobuf**: Uses protobuf directly for maximum control
+- **Target Flight Recorder**: Numeric, schema-driven ring records with no
+  protobuf, heap allocation, syscall, lock, or event-path I/O
+- **Clock Correlation**: Raw wrapping counters, clock generations, and bounded
+  host-reference snapshots reconstruct into nanosecond Perfetto timelines
 - **Streaming Oracle Indexing**: Query large traces through SQLite without
   whole-trace `ParseFromString`
 
@@ -34,6 +41,25 @@ pip install .
 # For development (includes protoc tools)
 pip install -e ".[dev]"
 ```
+
+## Compact target traces
+
+Small or timing-sensitive targets can record `.rbct` rather than native
+protobuf. The producer keeps its event schema; this repository supplies the
+format, target writer, validation, conversion, and collision-safe trace merge.
+
+```sh
+python tools/compact_schema_header.py producer-schema.json generated/schema.h
+python tools/compact_trace_to_perfetto.py capture.rbct capture.perfetto-trace \
+  --schema producer-schema.json
+python tools/merge_perfetto_sources.py capture.perfetto-trace kernel.perfetto-trace \
+  --output combined.perfetto-trace
+```
+
+The normal record remains event ID, timestamp delta, optional duration, and
+schema-defined numeric arguments. Names and protobuf expansion happen only on
+the host. See [`compact/FORMAT.md`](compact/FORMAT.md) for the compatibility
+contract and [`compact/README.md`](compact/README.md) for the C/C++ API.
 
 ## Quick Start (Python)
 

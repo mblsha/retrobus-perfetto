@@ -1,0 +1,52 @@
+name: Compact Trace CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'compact/**'
+      - '.github/workflows/compact-ci.yml'
+  pull_request:
+    paths:
+      - 'compact/**'
+      - '.github/workflows/compact-ci.yml'
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+        compiler: [gcc, clang]
+        include:
+          - compiler: gcc
+            c: gcc
+            cxx: g++
+          - compiler: clang
+            c: clang
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build clang llvm
+      - name: Configure
+        run: >-
+          cmake -S compact -B build/compact -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_C_COMPILER=${{ matrix.c }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+      - name: Build
+        run: cmake --build build/compact
+      - name: Test
+        run: ctest --test-dir build/compact --output-on-failure
+      - name: Check ARMv5TE freestanding object
+        if: matrix.compiler == 'clang' && matrix.build_type == 'Release'
+        run: |
+          clang --target=armv5te-none-eabi -march=armv5te -mfloat-abi=soft \
+            -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
+            -Wall -Wextra -Werror -Icompact/include \
+            -c compact/src/compact_trace.c -o build/compact/compact_trace_armv5te.o
+          undefined="$(readelf -Ws build/compact/compact_trace_armv5te.o | \
+            awk '$7 == "UND" && $8 != "" {print $8}')"
+          test -z "$undefined"

@@ -1,0 +1,3 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/retrobus_compact_trace-targets.cmake")

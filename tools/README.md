@@ -4,6 +4,34 @@ This directory contains reusable Python scripts for analyzing Perfetto traces, p
 
 ## Tools
 
+### Compact trace tools
+
+Generate target constants from an immutable producer schema:
+
+```sh
+python tools/compact_schema_header.py schema.json generated_schema.h
+```
+
+Validate and reconstruct either generic `.rbct` or legacy Redux `.rdxt` v1:
+
+```sh
+python tools/compact_trace_to_perfetto.py capture.rbct capture.perfetto-trace \
+  --schema schema.json
+```
+
+Merge already correlated Perfetto sources while remapping track, packet
+sequence, and flow IDs that would otherwise collide:
+
+```sh
+python tools/merge_perfetto_sources.py user.perfetto-trace kernel.perfetto-trace \
+  --output combined.perfetto-trace
+```
+
+Compact conversion requires the exact schema named by the file's producer ID,
+version, and SHA-256. The decoder validates header and chunk CRCs, record
+layouts, counter widths, generations, counts, and ring sequences before it
+publishes output.
+
 ### 1. perfetto_pc_analyzer.py
 
 Specialized tool for extracting and analyzing Program Counter (PC) addresses from CPU emulator traces.

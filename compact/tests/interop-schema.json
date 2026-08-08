@@ -1,0 +1,72 @@
+{
+  "format": "retrobus-compact-schema-v1",
+  "producer": {
+    "id": 4242,
+    "name": "interop"
+  },
+  "version": 1,
+  "process": "C interoperability fixture",
+  "tracks": [
+    {
+      "id": 0,
+      "name": "main",
+      "kind": "thread"
+    },
+    {
+      "id": 1,
+      "name": "bytes",
+      "kind": "counter",
+      "unit": "bytes"
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "name": "work",
+      "category": "runtime",
+      "kind": "slice",
+      "arguments": [
+        {
+          "name": "amount",
+          "type": "uint"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "fault",
+      "category": "runtime",
+      "kind": "instant",
+      "arguments": [
+        {
+          "name": "error",
+          "type": "sint"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "bytes",
+      "category": "storage",
+      "kind": "counter",
+      "arguments": [
+        {
+          "name": "value",
+          "type": "uint"
+        }
+      ]
+    },
+    {
+      "id": 300,
+      "name": "address",
+      "category": "runtime",
+      "kind": "instant",
+      "arguments": [
+        {
+          "name": "address",
+          "type": "fixed64"
+        }
+      ]
+    }
+  ]
+}

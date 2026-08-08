@@ -6,6 +6,10 @@ resolution-markers = [
     "python_full_version < '3.10'",
 ]
 
+[options]
+exclude-newer = "2026-08-01T05:01:33.807591Z"
+exclude-newer-span = "P7D"
+
 [[package]]
 name = "backports-tarfile"
 version = "1.2.0"
@@ -934,7 +938,7 @@ wheels = [
 
 [[package]]
 name = "retrobus-perfetto"
-version = "0.3.1"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "protobuf" },

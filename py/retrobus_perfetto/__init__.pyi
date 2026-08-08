@@ -5,9 +5,24 @@ from . import proto as proto
 from .annotations import DebugAnnotationBuilder as DebugAnnotationBuilder
 from .annotations import TrackEventWrapper as TrackEventWrapper
 from .builder import PerfettoTraceBuilder as PerfettoTraceBuilder
+from .compact import CompactClockSync as CompactClockSync
+from .compact import CompactRecord as CompactRecord
+from .compact import CompactTrace as CompactTrace
+from .compact import CompactTraceError as CompactTraceError
+from .compact import CompactTraceReader as CompactTraceReader
+from .compact import compact_trace_to_builder as compact_trace_to_builder
+from .compact import convert_compact_trace as convert_compact_trace
+from .compact import read_compact_trace as read_compact_trace
+from .compact_schema import CompactArgumentSchema as CompactArgumentSchema
+from .compact_schema import CompactEventSchema as CompactEventSchema
+from .compact_schema import CompactSchema as CompactSchema
+from .compact_schema import CompactSchemaError as CompactSchemaError
+from .compact_schema import CompactTrackSchema as CompactTrackSchema
+from .compact_schema import render_c_schema_header as render_c_schema_header
 from .oracle_index import IndexStats as IndexStats
 from .oracle_index import TracePacketRecord as TracePacketRecord
 from .oracle_index import VerifyStats as VerifyStats
+from .merge import merge_perfetto_traces as merge_perfetto_traces
 
 __version__: str
 
