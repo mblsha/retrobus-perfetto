@@ -12,7 +12,7 @@ Generate target constants from an immutable producer schema:
 python tools/compact_schema_header.py schema.json generated_schema.h
 ```
 
-Validate and reconstruct either generic `.rbct` or legacy Redux `.rdxt` v1:
+Validate and reconstruct a producer-neutral `.rbct` image:
 
 ```sh
 python tools/compact_trace_to_perfetto.py capture.rbct capture.perfetto-trace \

@@ -21,8 +21,6 @@ from .compact_schema import (
 
 RBCT_MAGIC = b"RBCTRC1\0"
 RBCT_CHUNK_MAGIC = b"RBCK"
-RDXT_MAGIC = b"RDXTRC1\0"
-RDXT_CHUNK_MAGIC = b"RTCK"
 FORMAT_VERSION = 1
 FILE_HEADER_BYTES = 160
 CHUNK_HEADER_BYTES = 48
@@ -530,134 +528,13 @@ class CompactTraceReader:
         return CompactTrace(header, self.schema, records, syncs)
 
 
-def _read_redux_v1(path: Path, schema: CompactSchema) -> CompactTrace:
-    """Read the original Redux `.rdxt` v1 format with an external schema."""
-    try:
-        data = path.read_bytes()
-    except OSError as error:
-        raise CompactTraceError(f"cannot read legacy Redux trace {path}: {error}") from error
-    if len(data) < 96 or data[:8] != RDXT_MAGIC:
-        raise CompactTraceError("not a Redux compact v1 trace")
-    version, header_bytes, chunk_header_bytes, schema_version = struct.unpack_from(
-        "<HHHH", data, 8
-    )
-    chunk_bytes, clock_unit_ns = struct.unpack_from("<II", data, 16)
-    if (
-        version != 1
-        or schema_version != schema.version
-        or header_bytes != 96
-        or chunk_header_bytes != 32
-        or chunk_bytes != 4096
-        or clock_unit_ns == 0
-    ):
-        raise CompactTraceError("unsupported Redux compact v1 layout")
-    if (len(data) - header_bytes) % chunk_bytes:
-        raise CompactTraceError("legacy Redux trace ends in a partial chunk")
-    retained_events, overwritten_events, retained_records, overwritten_records = (
-        struct.unpack_from("<QQQQ", data, 32)
-    )
-    total_events, total_records, dropped_records, buffer_bytes = struct.unpack_from(
-        "<QQQQ", data, 64
-    )
-    default_track = min(schema.tracks)
-    raw_records: list[CompactRecord] = []
-    sequences: list[int] = []
-    order = 0
-    for chunk_index in range((len(data) - header_bytes) // chunk_bytes):
-        chunk = data[
-            header_bytes + chunk_index * chunk_bytes :
-            header_bytes + (chunk_index + 1) * chunk_bytes
-        ]
-        if chunk[:4] != RDXT_CHUNK_MAGIC:
-            raise CompactTraceError(f"legacy chunk {chunk_index} has bad magic")
-        sequence = struct.unpack_from("<I", chunk, 4)[0]
-        base_timestamp = struct.unpack_from("<Q", chunk, 8)[0]
-        used, expected_records = struct.unpack_from("<HH", chunk, 16)
-        expected_events, expected_crc = struct.unpack_from("<II", chunk, 20)
-        if used > chunk_bytes - chunk_header_bytes:
-            raise CompactTraceError(f"legacy chunk {sequence} exceeds its bounds")
-        payload = chunk[chunk_header_bytes : chunk_header_bytes + used]
-        if zlib.crc32(payload) & 0xFFFF_FFFF != expected_crc:
-            raise CompactTraceError(f"legacy chunk {sequence} CRC mismatch")
-        sequences.append(sequence)
-        offset = 0
-        timestamp = base_timestamp
-        chunk_records = 0
-        chunk_events = 0
-        while offset < len(payload):
-            event_id = payload[offset]
-            offset += 1
-            event = schema.events.get(event_id)
-            if event is None:
-                raise CompactTraceError(f"unknown legacy compact event ID {event_id}")
-            delta, offset = _read_varint(payload, offset, len(payload))
-            timestamp += delta
-            duration: int | None = None
-            if event.kind == "slice":
-                duration, offset = _read_varint(payload, offset, len(payload))
-            arguments: list[Any] = []
-            for argument in event.arguments:
-                value, offset = _read_argument(payload, offset, len(payload), argument)
-                arguments.append(value)
-            raw_records.append(
-                CompactRecord(
-                    event,
-                    0,
-                    default_track,
-                    timestamp,
-                    duration,
-                    tuple(arguments),
-                    order,
-                )
-            )
-            order += 1
-            chunk_records += 1
-            chunk_events += 2 if event.kind == "slice" else 1
-        if chunk_records != expected_records or chunk_events != expected_events:
-            raise CompactTraceError(f"legacy chunk {sequence} count mismatch")
-    for previous, current in zip(sequences, sequences[1:]):
-        if current != (previous + 1) & 0xFFFF_FFFF:
-            raise CompactTraceError("legacy chunk sequence is not contiguous")
-    if len(raw_records) != retained_records:
-        raise CompactTraceError("legacy retained record count mismatch")
-    if sum(2 if record.event.kind == "slice" else 1 for record in raw_records) != retained_events:
-        raise CompactTraceError("legacy retained event count mismatch")
-    if total_records != retained_records + overwritten_records:
-        raise CompactTraceError("legacy total record count mismatch")
-    if total_events != retained_events + overwritten_events:
-        raise CompactTraceError("legacy total event count mismatch")
-
-    header = CompactTraceHeader(
-        source_format="redux-compact-v1",
-        flags=FLAG_FINALIZED,
-        clock_rate_numerator=1_000_000_000,
-        clock_rate_denominator=clock_unit_ns,
-        clock_width_bits=64,
-        producer_id=schema.producer_id,
-        schema_version=schema.version,
-        schema_sha256=schema.sha256,
-        session_id=b"\0" * 16,
-        total_records=total_records,
-        overwritten_records=overwritten_records,
-        dropped_records=dropped_records,
-        total_events=total_events,
-        overwritten_events=overwritten_events,
-        buffer_bytes=buffer_bytes,
-        initial_generation=0,
-        default_track=default_track,
-    )
-    synthetic_sync = CompactClockSync(0, 0, 0, 0, 0, -1, synthetic=True)
-    records, syncs = _extend_items(header, (synthetic_sync, *raw_records))
-    return CompactTrace(header, schema, records, syncs)
-
-
 def read_compact_trace(
     path: Path | str,
     schema: CompactSchema | Path | str,
     *,
     allow_unfinalized: bool = False,
 ) -> CompactTrace:
-    """Read `.rbct` or explicitly recognized Redux `.rdxt` version 1."""
+    """Read and validate a producer-neutral `.rbct` image."""
     producer_schema = (
         schema if isinstance(schema, CompactSchema) else CompactSchema.load(schema)
     )
@@ -667,13 +544,11 @@ def read_compact_trace(
             magic = file.read(8)
     except OSError as error:
         raise CompactTraceError(f"cannot read compact trace {source}: {error}") from error
-    if magic == RBCT_MAGIC:
-        return CompactTraceReader(
-            source, producer_schema, allow_unfinalized=allow_unfinalized
-        ).read()
-    if magic == RDXT_MAGIC:
-        return _read_redux_v1(source, producer_schema)
-    raise CompactTraceError("unrecognized compact trace magic")
+    if magic != RBCT_MAGIC:
+        raise CompactTraceError("unrecognized compact trace magic")
+    return CompactTraceReader(
+        source, producer_schema, allow_unfinalized=allow_unfinalized
+    ).read()
 
 
 @dataclass(frozen=True)

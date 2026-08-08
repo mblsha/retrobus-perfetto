@@ -36,881 +36,919 @@ using FrameTimelinePredictionType =
     perfetto::protos::FrameTimelineEvent::PredictionType;
 using FrameTimelineJankSeverityType =
     perfetto::protos::FrameTimelineEvent::JankSeverityType;
-using FrameTimelineLatchedFenceState =
-    perfetto::protos::FrameTimelineEvent::ActualSurfaceFrameStart::
-        LatchedFenceState;
+using FrameTimelineLatchedFenceState = perfetto::protos::FrameTimelineEvent::
+    ActualSurfaceFrameStart::LatchedFenceState;
 
 struct FrameTimelineExpectedSurfaceFrameStart {
-    int64_t cookie = 0;
-    int64_t token = 0;
-    int64_t display_frame_token = 0;
-    std::optional<int32_t> pid;
-    std::string layer_name;
+  int64_t cookie = 0;
+  int64_t token = 0;
+  int64_t display_frame_token = 0;
+  std::optional<int32_t> pid;
+  std::string layer_name;
 };
 
 struct FrameTimelineActualSurfaceFrameStart {
-    int64_t cookie = 0;
-    int64_t token = 0;
-    int64_t display_frame_token = 0;
-    std::optional<int32_t> pid;
-    std::string layer_name;
+  int64_t cookie = 0;
+  int64_t token = 0;
+  int64_t display_frame_token = 0;
+  std::optional<int32_t> pid;
+  std::string layer_name;
 
-    std::optional<FrameTimelinePresentType> present_type;
-    std::optional<bool> on_time_finish;
-    std::optional<bool> gpu_composition;
-    std::optional<int32_t> jank_type;
-    std::optional<FrameTimelinePredictionType> prediction_type;
-    std::optional<bool> is_buffer;
-    std::optional<FrameTimelineJankSeverityType> jank_severity_type;
-    std::optional<float> present_delay_millis;
-    std::optional<float> vsync_resynced_jitter_millis;
-    std::optional<float> jank_severity_score;
-    std::optional<int32_t> jank_type_experimental;
-    std::optional<FrameTimelinePresentType> present_type_experimental;
-    std::optional<float> jank_debug_metadata;
-    std::optional<FrameTimelineLatchedFenceState> latched_fence_state;
-    std::optional<float> animation_time_millis;
+  std::optional<FrameTimelinePresentType> present_type;
+  std::optional<bool> on_time_finish;
+  std::optional<bool> gpu_composition;
+  std::optional<int32_t> jank_type;
+  std::optional<FrameTimelinePredictionType> prediction_type;
+  std::optional<bool> is_buffer;
+  std::optional<FrameTimelineJankSeverityType> jank_severity_type;
+  std::optional<float> present_delay_millis;
+  std::optional<float> vsync_resynced_jitter_millis;
+  std::optional<float> jank_severity_score;
+  std::optional<int32_t> jank_type_experimental;
+  std::optional<FrameTimelinePresentType> present_type_experimental;
+  std::optional<float> jank_debug_metadata;
+  std::optional<FrameTimelineLatchedFenceState> latched_fence_state;
+  std::optional<float> animation_time_millis;
 };
 
 struct FrameTimelineExpectedDisplayFrameStart {
-    int64_t cookie = 0;
-    int64_t token = 0;
-    std::optional<int32_t> pid;
+  int64_t cookie = 0;
+  int64_t token = 0;
+  std::optional<int32_t> pid;
 };
 
 struct FrameTimelineActualDisplayFrameStart {
-    int64_t cookie = 0;
-    int64_t token = 0;
-    std::optional<int32_t> pid;
+  int64_t cookie = 0;
+  int64_t token = 0;
+  std::optional<int32_t> pid;
 
-    std::optional<FrameTimelinePresentType> present_type;
-    std::optional<bool> on_time_finish;
-    std::optional<bool> gpu_composition;
-    std::optional<int32_t> jank_type;
-    std::optional<FrameTimelinePredictionType> prediction_type;
-    std::optional<FrameTimelineJankSeverityType> jank_severity_type;
-    std::optional<float> present_delay_millis;
-    std::optional<float> jank_severity_score;
-    std::optional<int32_t> jank_type_experimental;
-    std::optional<FrameTimelinePresentType> present_type_experimental;
-    std::optional<float> jank_debug_metadata;
-    std::optional<int64_t> latched_unsignaled_count;
-    std::optional<int64_t> addressable_unsignaled_latch_count;
+  std::optional<FrameTimelinePresentType> present_type;
+  std::optional<bool> on_time_finish;
+  std::optional<bool> gpu_composition;
+  std::optional<int32_t> jank_type;
+  std::optional<FrameTimelinePredictionType> prediction_type;
+  std::optional<FrameTimelineJankSeverityType> jank_severity_type;
+  std::optional<float> present_delay_millis;
+  std::optional<float> jank_severity_score;
+  std::optional<int32_t> jank_type_experimental;
+  std::optional<FrameTimelinePresentType> present_type_experimental;
+  std::optional<float> jank_debug_metadata;
+  std::optional<int64_t> latched_unsignaled_count;
+  std::optional<int64_t> addressable_unsignaled_latch_count;
 };
 
 // Utility functions
 namespace detail {
-    // Default values for trace generation
-    constexpr uint64_t DEFAULT_THREAD_TID = 1000;
-    constexpr int32_t DEFAULT_PROCESS_PID = 1234;
-    // Pointer heuristic detection
-    inline bool is_pointer_key(std::string_view key) {
-        // Check suffixes (C++17 compatible)
-        const std::array<std::string_view, 5> suffixes = {"_addr", "_address", "_pc", "_sp", "_pointer"};
-        for (const auto& suffix : suffixes) {
-            if (key.size() >= suffix.size() && 
-                key.substr(key.size() - suffix.size()) == suffix) {
-                return true;
-            }
-        }
-        
-        // Check exact matches
-        return key == "pc" || key == "sp" || key == "address";
+// Default values for trace generation
+constexpr uint64_t DEFAULT_THREAD_TID = 1000;
+constexpr int32_t DEFAULT_PROCESS_PID = 1234;
+// Pointer heuristic detection
+inline bool is_pointer_key(std::string_view key) {
+  // Check suffixes (C++17 compatible)
+  const std::array<std::string_view, 5> suffixes = {"_addr", "_address", "_pc",
+                                                    "_sp", "_pointer"};
+  for (const auto& suffix : suffixes) {
+    if (key.size() >= suffix.size() &&
+        key.substr(key.size() - suffix.size()) == suffix) {
+      return true;
+    }
+  }
+
+  // Check exact matches
+  return key == "pc" || key == "sp" || key == "address";
+}
+
+class InterningState {
+ public:
+  uint64_t intern_event_name(std::string_view name,
+                             perfetto::protos::TracePacket* packet) {
+    mark_incremental_state_needed(packet);
+
+    std::string key(name);
+    auto it = event_names_.find(key);
+    if (it != event_names_.end()) {
+      return it->second;
     }
 
-    class InterningState {
-    public:
-        uint64_t intern_event_name(std::string_view name, perfetto::protos::TracePacket* packet) {
-            mark_incremental_state_needed(packet);
+    const uint64_t iid = next_event_name_iid_++;
+    event_names_.emplace(key, iid);
 
-            std::string key(name);
-            auto it = event_names_.find(key);
-            if (it != event_names_.end()) {
-                return it->second;
-            }
+    auto* entry = packet->mutable_interned_data()->add_event_names();
+    entry->set_iid(iid);
+    entry->set_name(key);
+    return iid;
+  }
 
-            const uint64_t iid = next_event_name_iid_++;
-            event_names_.emplace(key, iid);
+  uint64_t intern_debug_annotation_name(std::string_view name,
+                                        perfetto::protos::TracePacket* packet) {
+    mark_incremental_state_needed(packet);
 
-            auto* entry = packet->mutable_interned_data()->add_event_names();
-            entry->set_iid(iid);
-            entry->set_name(key);
-            return iid;
-        }
-
-        uint64_t intern_debug_annotation_name(std::string_view name,
-                                             perfetto::protos::TracePacket* packet) {
-            mark_incremental_state_needed(packet);
-
-            std::string key(name);
-            auto it = debug_annotation_names_.find(key);
-            if (it != debug_annotation_names_.end()) {
-                return it->second;
-            }
-
-            const uint64_t iid = next_debug_annotation_name_iid_++;
-            debug_annotation_names_.emplace(key, iid);
-
-            auto* entry = packet->mutable_interned_data()->add_debug_annotation_names();
-            entry->set_iid(iid);
-            entry->set_name(key);
-            return iid;
-        }
-
-        uint64_t intern_debug_annotation_string_value(std::string_view value,
-                                                      perfetto::protos::TracePacket* packet) {
-            mark_incremental_state_needed(packet);
-
-            std::string key(value);
-            auto it = debug_annotation_string_values_.find(key);
-            if (it != debug_annotation_string_values_.end()) {
-                return it->second;
-            }
-
-            const uint64_t iid = next_debug_annotation_string_value_iid_++;
-            debug_annotation_string_values_.emplace(key, iid);
-
-            auto* entry = packet->mutable_interned_data()->add_debug_annotation_string_values();
-            entry->set_iid(iid);
-            entry->set_str(key);
-            return iid;
-        }
-
-    private:
-        void mark_incremental_state_needed(perfetto::protos::TracePacket* packet) {
-            uint32_t flags = packet->sequence_flags();
-            flags |= perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE;
-            packet->set_sequence_flags(flags);
-        }
-
-        std::unordered_map<std::string, uint64_t> event_names_;
-        std::unordered_map<std::string, uint64_t> debug_annotation_names_;
-        std::unordered_map<std::string, uint64_t> debug_annotation_string_values_;
-
-        uint64_t next_event_name_iid_{1};
-        uint64_t next_debug_annotation_name_iid_{1};
-        uint64_t next_debug_annotation_string_value_iid_{1};
-    };
-
-    struct SequenceInternTables {
-        std::unordered_map<uint64_t, std::string> event_names = {};
-        std::unordered_map<uint64_t, std::string> debug_annotation_names = {};
-        std::unordered_map<uint64_t, std::string> debug_annotation_string_values = {};
-        bool valid = false;
-
-        void clear(const bool mark_valid = false) {
-            event_names.clear();
-            debug_annotation_names.clear();
-            debug_annotation_string_values.clear();
-            valid = mark_valid;
-        }
-    };
-
-    inline std::string make_missing_iid_string(std::string_view kind, const uint64_t iid)
-    {
-        return "<missing " + std::string(kind) + " iid=" + std::to_string(iid) + ">";
+    std::string key(name);
+    auto it = debug_annotation_names_.find(key);
+    if (it != debug_annotation_names_.end()) {
+      return it->second;
     }
 
-    inline void resolve_debug_annotation_inplace(perfetto::protos::DebugAnnotation& annotation,
-                                                 const SequenceInternTables& tables)
-    {
-        if (annotation.name_field_case() == perfetto::protos::DebugAnnotation::kNameIid) {
-            const auto iid = annotation.name_iid();
-            const auto it = tables.debug_annotation_names.find(iid);
-            annotation.set_name(it != tables.debug_annotation_names.end()
-                                        ? it->second
-                                        : make_missing_iid_string("DebugAnnotationName", iid));
-        }
+    const uint64_t iid = next_debug_annotation_name_iid_++;
+    debug_annotation_names_.emplace(key, iid);
 
-        if (annotation.value_case() ==
-            perfetto::protos::DebugAnnotation::kStringValueIid) {
-            const auto iid = annotation.string_value_iid();
-            const auto it = tables.debug_annotation_string_values.find(iid);
-            annotation.set_string_value(
-                    it != tables.debug_annotation_string_values.end()
-                            ? it->second
-                            : make_missing_iid_string("DebugAnnotationStringValue", iid));
-        }
+    auto* entry = packet->mutable_interned_data()->add_debug_annotation_names();
+    entry->set_iid(iid);
+    entry->set_name(key);
+    return iid;
+  }
 
-        for (auto& entry : *annotation.mutable_dict_entries()) {
-            resolve_debug_annotation_inplace(entry, tables);
-        }
-        for (auto& entry : *annotation.mutable_array_values()) {
-            resolve_debug_annotation_inplace(entry, tables);
-        }
+  uint64_t intern_debug_annotation_string_value(
+      std::string_view value,
+      perfetto::protos::TracePacket* packet) {
+    mark_incremental_state_needed(packet);
+
+    std::string key(value);
+    auto it = debug_annotation_string_values_.find(key);
+    if (it != debug_annotation_string_values_.end()) {
+      return it->second;
     }
-} // namespace detail
+
+    const uint64_t iid = next_debug_annotation_string_value_iid_++;
+    debug_annotation_string_values_.emplace(key, iid);
+
+    auto* entry =
+        packet->mutable_interned_data()->add_debug_annotation_string_values();
+    entry->set_iid(iid);
+    entry->set_str(key);
+    return iid;
+  }
+
+ private:
+  void mark_incremental_state_needed(perfetto::protos::TracePacket* packet) {
+    uint32_t flags = packet->sequence_flags();
+    flags |= perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE;
+    packet->set_sequence_flags(flags);
+  }
+
+  std::unordered_map<std::string, uint64_t> event_names_;
+  std::unordered_map<std::string, uint64_t> debug_annotation_names_;
+  std::unordered_map<std::string, uint64_t> debug_annotation_string_values_;
+
+  uint64_t next_event_name_iid_{1};
+  uint64_t next_debug_annotation_name_iid_{1};
+  uint64_t next_debug_annotation_string_value_iid_{1};
+};
+
+struct SequenceInternTables {
+  std::unordered_map<uint64_t, std::string> event_names = {};
+  std::unordered_map<uint64_t, std::string> debug_annotation_names = {};
+  std::unordered_map<uint64_t, std::string> debug_annotation_string_values = {};
+  bool valid = false;
+
+  void clear(const bool mark_valid = false) {
+    event_names.clear();
+    debug_annotation_names.clear();
+    debug_annotation_string_values.clear();
+    valid = mark_valid;
+  }
+};
+
+inline std::string make_missing_iid_string(std::string_view kind,
+                                           const uint64_t iid) {
+  return "<missing " + std::string(kind) + " iid=" + std::to_string(iid) + ">";
+}
+
+inline void resolve_debug_annotation_inplace(
+    perfetto::protos::DebugAnnotation& annotation,
+    const SequenceInternTables& tables) {
+  if (annotation.name_field_case() ==
+      perfetto::protos::DebugAnnotation::kNameIid) {
+    const auto iid = annotation.name_iid();
+    const auto it = tables.debug_annotation_names.find(iid);
+    annotation.set_name(
+        it != tables.debug_annotation_names.end()
+            ? it->second
+            : make_missing_iid_string("DebugAnnotationName", iid));
+  }
+
+  if (annotation.value_case() ==
+      perfetto::protos::DebugAnnotation::kStringValueIid) {
+    const auto iid = annotation.string_value_iid();
+    const auto it = tables.debug_annotation_string_values.find(iid);
+    annotation.set_string_value(
+        it != tables.debug_annotation_string_values.end()
+            ? it->second
+            : make_missing_iid_string("DebugAnnotationStringValue", iid));
+  }
+
+  for (auto& entry : *annotation.mutable_dict_entries()) {
+    resolve_debug_annotation_inplace(entry, tables);
+  }
+  for (auto& entry : *annotation.mutable_array_values()) {
+    resolve_debug_annotation_inplace(entry, tables);
+  }
+}
+}  // namespace detail
 
 // Main trace builder class
 class PerfettoTraceBuilder {
-private:
-    std::unique_ptr<perfetto::protos::Trace> trace_;
-    std::atomic<uint64_t> last_track_uuid_{0};
-    std::atomic<uint64_t> last_thread_tid_{detail::DEFAULT_THREAD_TID};
-    uint64_t process_uuid_;
-    int32_t pid_;
-    uint32_t trusted_packet_sequence_id_{1};
-    bool emitted_incremental_state_cleared_{false};
-    
-    // Metadata tracking
-    std::unordered_map<uint64_t, std::string> track_names_;
-    std::unordered_map<uint64_t, uint64_t> track_parents_;
+ private:
+  std::unique_ptr<perfetto::protos::Trace> trace_;
+  std::atomic<uint64_t> last_track_uuid_{0};
+  std::atomic<uint64_t> last_thread_tid_{detail::DEFAULT_THREAD_TID};
+  uint64_t process_uuid_;
+  int32_t pid_;
+  uint32_t trusted_packet_sequence_id_{1};
+  bool emitted_incremental_state_cleared_{false};
 
-    detail::InterningState interning_state_;
-    
-    // Helpers to add new packets with consistent initialization
-    perfetto::protos::TracePacket* create_packet() {
-        auto* packet = trace_->add_packet();
-        packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
-        if (!emitted_incremental_state_cleared_) {
-            packet->set_sequence_flags(packet->sequence_flags() |
-                                       perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED);
-            emitted_incremental_state_cleared_ = true;
-        }
-        return packet;
-    }
+  // Metadata tracking
+  std::unordered_map<uint64_t, std::string> track_names_;
+  std::unordered_map<uint64_t, uint64_t> track_parents_;
 
-    perfetto::protos::TracePacket* create_packet(uint64_t timestamp_ns) {
-        auto* packet = create_packet();
-        packet->set_timestamp(timestamp_ns);
-        return packet;
-    }
-    
-public:
-    explicit PerfettoTraceBuilder(
-        std::string_view process_name,
-        int32_t pid = detail::DEFAULT_PROCESS_PID)
-        : trace_(std::make_unique<perfetto::protos::Trace>())
-        , process_uuid_(++last_track_uuid_)
-        , pid_(pid) {
-        
-        // Add process descriptor
-        auto* packet = create_packet();
-        
-        auto* desc = packet->mutable_track_descriptor();
-        desc->set_uuid(process_uuid_);
-        desc->set_name(std::string(process_name));
-        
-        auto* process = desc->mutable_process();
-        process->set_pid(pid_);
-        process->set_process_name(std::string(process_name));
-        
-        // Store metadata
-        track_names_[process_uuid_] = std::string(process_name);
-    }
-    
-    ~PerfettoTraceBuilder() = default;
-    
-    // Non-copyable, non-moveable (due to atomic members)
-    PerfettoTraceBuilder(const PerfettoTraceBuilder&) = delete;
-    PerfettoTraceBuilder& operator=(const PerfettoTraceBuilder&) = delete;
-    PerfettoTraceBuilder(PerfettoTraceBuilder&&) = delete;
-    PerfettoTraceBuilder& operator=(PerfettoTraceBuilder&&) = delete;
-    
-    // Track management
-    [[nodiscard]] uint64_t add_thread(std::string_view name) {
-        uint64_t uuid = ++last_track_uuid_;
-        uint64_t tid = ++last_thread_tid_;
-        
-        auto* packet = create_packet();
-        
-        auto* desc = packet->mutable_track_descriptor();
-        desc->set_uuid(uuid);
-        desc->set_name(std::string(name));
-        
-        auto* thread = desc->mutable_thread();
-        thread->set_pid(pid_);
-        thread->set_tid(static_cast<int32_t>(tid));
-        thread->set_thread_name(std::string(name));
-        
-        // Store metadata
-        track_names_[uuid] = std::string(name);
-        track_parents_[uuid] = process_uuid_;
-        
-        return uuid;
-    }
-    
-    [[nodiscard]] uint64_t add_counter_track(std::string_view name, std::string_view unit) {
-        uint64_t uuid = ++last_track_uuid_;
-        
-        auto* packet = create_packet();
-        
-        auto* desc = packet->mutable_track_descriptor();
-        desc->set_uuid(uuid);
-        desc->set_name(std::string(name));
-        desc->set_parent_uuid(process_uuid_);
-        
-        // For counters, we just use a regular track descriptor
-        // The unit information could be added to the name if needed
-        if (!unit.empty()) {
-            desc->set_name(std::string(name) + " (" + std::string(unit) + ")");
-        }
-        
-        // Store metadata
-        track_names_[uuid] = std::string(name);
-        track_parents_[uuid] = process_uuid_;
-        
-        return uuid;
-    }
-    
-    // Event creation
-    [[nodiscard]] TrackEventWrapper begin_slice(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns);
-    
-    void end_slice(uint64_t track_uuid, uint64_t timestamp_ns) {
-        auto* packet = create_packet(timestamp_ns);
-        
-        auto* event = packet->mutable_track_event();
-        event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_END);
-        event->set_track_uuid(track_uuid);
-    }
-    
-    [[nodiscard]] TrackEventWrapper add_instant_event(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns);
-    
-    [[nodiscard]] TrackEventWrapper add_flow(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns,
-                                              uint64_t flow_id, bool terminating = false);
+  detail::InterningState interning_state_;
 
-    void add_frame_timeline_expected_surface_start(
-        uint64_t timestamp_ns,
-        const FrameTimelineExpectedSurfaceFrameStart& frame) {
-        auto* packet = create_packet(timestamp_ns);
-        auto* event = packet->mutable_frame_timeline_event()
-                          ->mutable_expected_surface_frame_start();
-        event->set_cookie(frame.cookie);
-        event->set_token(frame.token);
-        event->set_display_frame_token(frame.display_frame_token);
-        event->set_pid(frame.pid.value_or(pid_));
-        if (!frame.layer_name.empty()) {
-            event->set_layer_name(frame.layer_name);
-        }
+  // Helpers to add new packets with consistent initialization
+  perfetto::protos::TracePacket* create_packet() {
+    auto* packet = trace_->add_packet();
+    packet->set_trusted_packet_sequence_id(trusted_packet_sequence_id_);
+    if (!emitted_incremental_state_cleared_) {
+      packet->set_sequence_flags(
+          packet->sequence_flags() |
+          perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED);
+      emitted_incremental_state_cleared_ = true;
+    }
+    return packet;
+  }
+
+  perfetto::protos::TracePacket* create_packet(uint64_t timestamp_ns) {
+    auto* packet = create_packet();
+    packet->set_timestamp(timestamp_ns);
+    return packet;
+  }
+
+ public:
+  explicit PerfettoTraceBuilder(std::string_view process_name,
+                                int32_t pid = detail::DEFAULT_PROCESS_PID)
+      : trace_(std::make_unique<perfetto::protos::Trace>()),
+        process_uuid_(++last_track_uuid_),
+        pid_(pid) {
+    // Add process descriptor
+    auto* packet = create_packet();
+
+    auto* desc = packet->mutable_track_descriptor();
+    desc->set_uuid(process_uuid_);
+    desc->set_name(std::string(process_name));
+
+    auto* process = desc->mutable_process();
+    process->set_pid(pid_);
+    process->set_process_name(std::string(process_name));
+
+    // Store metadata
+    track_names_[process_uuid_] = std::string(process_name);
+  }
+
+  ~PerfettoTraceBuilder() = default;
+
+  // Non-copyable, non-moveable (due to atomic members)
+  PerfettoTraceBuilder(const PerfettoTraceBuilder&) = delete;
+  PerfettoTraceBuilder& operator=(const PerfettoTraceBuilder&) = delete;
+  PerfettoTraceBuilder(PerfettoTraceBuilder&&) = delete;
+  PerfettoTraceBuilder& operator=(PerfettoTraceBuilder&&) = delete;
+
+  // Track management
+  [[nodiscard]] uint64_t add_thread(std::string_view name) {
+    uint64_t uuid = ++last_track_uuid_;
+    uint64_t tid = ++last_thread_tid_;
+
+    auto* packet = create_packet();
+
+    auto* desc = packet->mutable_track_descriptor();
+    desc->set_uuid(uuid);
+    desc->set_name(std::string(name));
+
+    auto* thread = desc->mutable_thread();
+    thread->set_pid(pid_);
+    thread->set_tid(static_cast<int32_t>(tid));
+    thread->set_thread_name(std::string(name));
+
+    // Store metadata
+    track_names_[uuid] = std::string(name);
+    track_parents_[uuid] = process_uuid_;
+
+    return uuid;
+  }
+
+  [[nodiscard]] uint64_t add_counter_track(std::string_view name,
+                                           std::string_view unit) {
+    uint64_t uuid = ++last_track_uuid_;
+
+    auto* packet = create_packet();
+
+    auto* desc = packet->mutable_track_descriptor();
+    desc->set_uuid(uuid);
+    desc->set_name(std::string(name));
+    desc->set_parent_uuid(process_uuid_);
+
+    // For counters, we just use a regular track descriptor
+    // The unit information could be added to the name if needed
+    if (!unit.empty()) {
+      desc->set_name(std::string(name) + " (" + std::string(unit) + ")");
     }
 
-    void add_frame_timeline_actual_surface_start(
-        uint64_t timestamp_ns,
-        const FrameTimelineActualSurfaceFrameStart& frame) {
-        auto* packet = create_packet(timestamp_ns);
-        auto* event = packet->mutable_frame_timeline_event()
-                          ->mutable_actual_surface_frame_start();
-        event->set_cookie(frame.cookie);
-        event->set_token(frame.token);
-        event->set_display_frame_token(frame.display_frame_token);
-        event->set_pid(frame.pid.value_or(pid_));
-        if (!frame.layer_name.empty()) {
-            event->set_layer_name(frame.layer_name);
-        }
-        if (frame.present_type) {
-            event->set_present_type(*frame.present_type);
-        }
-        if (frame.on_time_finish) {
-            event->set_on_time_finish(*frame.on_time_finish);
-        }
-        if (frame.gpu_composition) {
-            event->set_gpu_composition(*frame.gpu_composition);
-        }
-        if (frame.jank_type) {
-            event->set_jank_type(*frame.jank_type);
-        }
-        if (frame.prediction_type) {
-            event->set_prediction_type(*frame.prediction_type);
-        }
-        if (frame.is_buffer) {
-            event->set_is_buffer(*frame.is_buffer);
-        }
-        if (frame.jank_severity_type) {
-            event->set_jank_severity_type(*frame.jank_severity_type);
-        }
-        if (frame.present_delay_millis) {
-            event->set_present_delay_millis(*frame.present_delay_millis);
-        }
-        if (frame.vsync_resynced_jitter_millis) {
-            event->set_vsync_resynced_jitter_millis(
-                *frame.vsync_resynced_jitter_millis);
-        }
-        if (frame.jank_severity_score) {
-            event->set_jank_severity_score(*frame.jank_severity_score);
-        }
-        if (frame.jank_type_experimental) {
-            event->set_jank_type_experimental(*frame.jank_type_experimental);
-        }
-        if (frame.present_type_experimental) {
-            event->set_present_type_experimental(
-                *frame.present_type_experimental);
-        }
-        if (frame.jank_debug_metadata) {
-            event->set_jank_debug_metadata(*frame.jank_debug_metadata);
-        }
-        if (frame.latched_fence_state) {
-            event->set_latched_fence_state(*frame.latched_fence_state);
-        }
-        if (frame.animation_time_millis) {
-            event->set_animation_time_millis(*frame.animation_time_millis);
-        }
+    // Store metadata
+    track_names_[uuid] = std::string(name);
+    track_parents_[uuid] = process_uuid_;
+
+    return uuid;
+  }
+
+  // Event creation
+  [[nodiscard]] TrackEventWrapper begin_slice(uint64_t track_uuid,
+                                              std::string_view name,
+                                              uint64_t timestamp_ns);
+
+  void end_slice(uint64_t track_uuid, uint64_t timestamp_ns) {
+    auto* packet = create_packet(timestamp_ns);
+
+    auto* event = packet->mutable_track_event();
+    event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_END);
+    event->set_track_uuid(track_uuid);
+  }
+
+  [[nodiscard]] TrackEventWrapper add_instant_event(uint64_t track_uuid,
+                                                    std::string_view name,
+                                                    uint64_t timestamp_ns);
+
+  [[nodiscard]] TrackEventWrapper add_flow(uint64_t track_uuid,
+                                           std::string_view name,
+                                           uint64_t timestamp_ns,
+                                           uint64_t flow_id,
+                                           bool terminating = false);
+
+  void add_frame_timeline_expected_surface_start(
+      uint64_t timestamp_ns,
+      const FrameTimelineExpectedSurfaceFrameStart& frame) {
+    auto* packet = create_packet(timestamp_ns);
+    auto* event = packet->mutable_frame_timeline_event()
+                      ->mutable_expected_surface_frame_start();
+    event->set_cookie(frame.cookie);
+    event->set_token(frame.token);
+    event->set_display_frame_token(frame.display_frame_token);
+    event->set_pid(frame.pid.value_or(pid_));
+    if (!frame.layer_name.empty()) {
+      event->set_layer_name(frame.layer_name);
+    }
+  }
+
+  void add_frame_timeline_actual_surface_start(
+      uint64_t timestamp_ns,
+      const FrameTimelineActualSurfaceFrameStart& frame) {
+    auto* packet = create_packet(timestamp_ns);
+    auto* event = packet->mutable_frame_timeline_event()
+                      ->mutable_actual_surface_frame_start();
+    event->set_cookie(frame.cookie);
+    event->set_token(frame.token);
+    event->set_display_frame_token(frame.display_frame_token);
+    event->set_pid(frame.pid.value_or(pid_));
+    if (!frame.layer_name.empty()) {
+      event->set_layer_name(frame.layer_name);
+    }
+    if (frame.present_type) {
+      event->set_present_type(*frame.present_type);
+    }
+    if (frame.on_time_finish) {
+      event->set_on_time_finish(*frame.on_time_finish);
+    }
+    if (frame.gpu_composition) {
+      event->set_gpu_composition(*frame.gpu_composition);
+    }
+    if (frame.jank_type) {
+      event->set_jank_type(*frame.jank_type);
+    }
+    if (frame.prediction_type) {
+      event->set_prediction_type(*frame.prediction_type);
+    }
+    if (frame.is_buffer) {
+      event->set_is_buffer(*frame.is_buffer);
+    }
+    if (frame.jank_severity_type) {
+      event->set_jank_severity_type(*frame.jank_severity_type);
+    }
+    if (frame.present_delay_millis) {
+      event->set_present_delay_millis(*frame.present_delay_millis);
+    }
+    if (frame.vsync_resynced_jitter_millis) {
+      event->set_vsync_resynced_jitter_millis(
+          *frame.vsync_resynced_jitter_millis);
+    }
+    if (frame.jank_severity_score) {
+      event->set_jank_severity_score(*frame.jank_severity_score);
+    }
+    if (frame.jank_type_experimental) {
+      event->set_jank_type_experimental(*frame.jank_type_experimental);
+    }
+    if (frame.present_type_experimental) {
+      event->set_present_type_experimental(*frame.present_type_experimental);
+    }
+    if (frame.jank_debug_metadata) {
+      event->set_jank_debug_metadata(*frame.jank_debug_metadata);
+    }
+    if (frame.latched_fence_state) {
+      event->set_latched_fence_state(*frame.latched_fence_state);
+    }
+    if (frame.animation_time_millis) {
+      event->set_animation_time_millis(*frame.animation_time_millis);
+    }
+  }
+
+  void add_frame_timeline_expected_display_start(
+      uint64_t timestamp_ns,
+      const FrameTimelineExpectedDisplayFrameStart& frame) {
+    auto* packet = create_packet(timestamp_ns);
+    auto* event = packet->mutable_frame_timeline_event()
+                      ->mutable_expected_display_frame_start();
+    event->set_cookie(frame.cookie);
+    event->set_token(frame.token);
+    event->set_pid(frame.pid.value_or(pid_));
+  }
+
+  void add_frame_timeline_actual_display_start(
+      uint64_t timestamp_ns,
+      const FrameTimelineActualDisplayFrameStart& frame) {
+    auto* packet = create_packet(timestamp_ns);
+    auto* event = packet->mutable_frame_timeline_event()
+                      ->mutable_actual_display_frame_start();
+    event->set_cookie(frame.cookie);
+    event->set_token(frame.token);
+    event->set_pid(frame.pid.value_or(pid_));
+    if (frame.present_type) {
+      event->set_present_type(*frame.present_type);
+    }
+    if (frame.on_time_finish) {
+      event->set_on_time_finish(*frame.on_time_finish);
+    }
+    if (frame.gpu_composition) {
+      event->set_gpu_composition(*frame.gpu_composition);
+    }
+    if (frame.jank_type) {
+      event->set_jank_type(*frame.jank_type);
+    }
+    if (frame.prediction_type) {
+      event->set_prediction_type(*frame.prediction_type);
+    }
+    if (frame.jank_severity_type) {
+      event->set_jank_severity_type(*frame.jank_severity_type);
+    }
+    if (frame.present_delay_millis) {
+      event->set_present_delay_millis(*frame.present_delay_millis);
+    }
+    if (frame.jank_severity_score) {
+      event->set_jank_severity_score(*frame.jank_severity_score);
+    }
+    if (frame.jank_type_experimental) {
+      event->set_jank_type_experimental(*frame.jank_type_experimental);
+    }
+    if (frame.present_type_experimental) {
+      event->set_present_type_experimental(*frame.present_type_experimental);
+    }
+    if (frame.jank_debug_metadata) {
+      event->set_jank_debug_metadata(*frame.jank_debug_metadata);
+    }
+    if (frame.latched_unsignaled_count) {
+      event->set_latched_unsignaled_count(*frame.latched_unsignaled_count);
+    }
+    if (frame.addressable_unsignaled_latch_count) {
+      event->set_addressable_unsignaled_latch_count(
+          *frame.addressable_unsignaled_latch_count);
+    }
+  }
+
+  void end_frame_timeline(uint64_t timestamp_ns, int64_t cookie) {
+    auto* packet = create_packet(timestamp_ns);
+    packet->mutable_frame_timeline_event()->mutable_frame_end()->set_cookie(
+        cookie);
+  }
+
+  void update_counter(uint64_t track_uuid,
+                      double value,
+                      uint64_t timestamp_ns) {
+    auto* packet = create_packet(timestamp_ns);
+
+    auto* event = packet->mutable_track_event();
+    event->set_type(perfetto::protos::TrackEvent::TYPE_COUNTER);
+    event->set_track_uuid(track_uuid);
+
+    const double min_int64 =
+        static_cast<double>(std::numeric_limits<int64_t>::min());
+    const double max_int64 =
+        static_cast<double>(std::numeric_limits<int64_t>::max());
+
+    if (std::isfinite(value) && value >= min_int64 && value <= max_int64) {
+      const double truncated = std::trunc(value);
+      if (truncated == value) {
+        event->set_counter_value(static_cast<int64_t>(truncated));
+        return;
+      }
     }
 
-    void add_frame_timeline_expected_display_start(
-        uint64_t timestamp_ns,
-        const FrameTimelineExpectedDisplayFrameStart& frame) {
-        auto* packet = create_packet(timestamp_ns);
-        auto* event = packet->mutable_frame_timeline_event()
-                          ->mutable_expected_display_frame_start();
-        event->set_cookie(frame.cookie);
-        event->set_token(frame.token);
-        event->set_pid(frame.pid.value_or(pid_));
+    event->set_double_counter_value(value);
+  }
+
+  // Serialization
+  void save(const std::filesystem::path& path) const {
+    std::ofstream file(path, std::ios::binary);
+    if (!file) {
+      throw std::runtime_error("Failed to open file: " + path.string());
     }
 
-    void add_frame_timeline_actual_display_start(
-        uint64_t timestamp_ns,
-        const FrameTimelineActualDisplayFrameStart& frame) {
-        auto* packet = create_packet(timestamp_ns);
-        auto* event = packet->mutable_frame_timeline_event()
-                          ->mutable_actual_display_frame_start();
-        event->set_cookie(frame.cookie);
-        event->set_token(frame.token);
-        event->set_pid(frame.pid.value_or(pid_));
-        if (frame.present_type) {
-            event->set_present_type(*frame.present_type);
-        }
-        if (frame.on_time_finish) {
-            event->set_on_time_finish(*frame.on_time_finish);
-        }
-        if (frame.gpu_composition) {
-            event->set_gpu_composition(*frame.gpu_composition);
-        }
-        if (frame.jank_type) {
-            event->set_jank_type(*frame.jank_type);
-        }
-        if (frame.prediction_type) {
-            event->set_prediction_type(*frame.prediction_type);
-        }
-        if (frame.jank_severity_type) {
-            event->set_jank_severity_type(*frame.jank_severity_type);
-        }
-        if (frame.present_delay_millis) {
-            event->set_present_delay_millis(*frame.present_delay_millis);
-        }
-        if (frame.jank_severity_score) {
-            event->set_jank_severity_score(*frame.jank_severity_score);
-        }
-        if (frame.jank_type_experimental) {
-            event->set_jank_type_experimental(*frame.jank_type_experimental);
-        }
-        if (frame.present_type_experimental) {
-            event->set_present_type_experimental(
-                *frame.present_type_experimental);
-        }
-        if (frame.jank_debug_metadata) {
-            event->set_jank_debug_metadata(*frame.jank_debug_metadata);
-        }
-        if (frame.latched_unsignaled_count) {
-            event->set_latched_unsignaled_count(
-                *frame.latched_unsignaled_count);
-        }
-        if (frame.addressable_unsignaled_latch_count) {
-            event->set_addressable_unsignaled_latch_count(
-                *frame.addressable_unsignaled_latch_count);
-        }
+    if (!trace_->SerializeToOstream(&file)) {
+      throw std::runtime_error("Failed to serialize trace");
+    }
+  }
+
+  [[nodiscard]] std::vector<uint8_t> serialize() const {
+    std::vector<uint8_t> data;
+    data.resize(trace_->ByteSizeLong());
+
+    if (!trace_->SerializeToArray(data.data(), static_cast<int>(data.size()))) {
+      throw std::runtime_error("Failed to serialize trace");
     }
 
-    void end_frame_timeline(uint64_t timestamp_ns, int64_t cookie) {
-        auto* packet = create_packet(timestamp_ns);
-        packet->mutable_frame_timeline_event()
-            ->mutable_frame_end()
-            ->set_cookie(cookie);
-    }
-    
-    void update_counter(uint64_t track_uuid, double value, uint64_t timestamp_ns) {
-        auto* packet = create_packet(timestamp_ns);
-        
-        auto* event = packet->mutable_track_event();
-        event->set_type(perfetto::protos::TrackEvent::TYPE_COUNTER);
-        event->set_track_uuid(track_uuid);
-        
-        const double min_int64 = static_cast<double>(std::numeric_limits<int64_t>::min());
-        const double max_int64 = static_cast<double>(std::numeric_limits<int64_t>::max());
+    return data;
+  }
 
-        if (std::isfinite(value) && value >= min_int64 && value <= max_int64) {
-            const double truncated = std::trunc(value);
-            if (truncated == value) {
-                event->set_counter_value(static_cast<int64_t>(truncated));
-                return;
-            }
-        }
+  // Metadata queries
+  [[nodiscard]] std::optional<std::string_view> get_track_name(
+      uint64_t track_uuid) const {
+    auto it = track_names_.find(track_uuid);
+    if (it != track_names_.end()) {
+      return it->second;
+    }
+    return std::nullopt;
+  }
 
-        event->set_double_counter_value(value);
-    }
-    
-    // Serialization
-    void save(const std::filesystem::path& path) const {
-        std::ofstream file(path, std::ios::binary);
-        if (!file) {
-            throw std::runtime_error("Failed to open file: " + path.string());
-        }
-        
-        if (!trace_->SerializeToOstream(&file)) {
-            throw std::runtime_error("Failed to serialize trace");
-        }
-    }
-    
-    [[nodiscard]] std::vector<uint8_t> serialize() const {
-        std::vector<uint8_t> data;
-        data.resize(trace_->ByteSizeLong());
-        
-        if (!trace_->SerializeToArray(data.data(), static_cast<int>(data.size()))) {
-            throw std::runtime_error("Failed to serialize trace");
-        }
-        
-        return data;
-    }
-    
-    // Metadata queries
-    [[nodiscard]] std::optional<std::string_view> get_track_name(uint64_t track_uuid) const {
-        auto it = track_names_.find(track_uuid);
-        if (it != track_names_.end()) {
-            return it->second;
-        }
-        return std::nullopt;
-    }
-    
-    [[nodiscard]] std::vector<std::pair<uint64_t, std::string>> get_all_tracks() const {
-        std::vector<std::pair<uint64_t, std::string>> result;
-        result.reserve(track_names_.size());
-        
-        for (const auto& [uuid, name] : track_names_) {
-            result.emplace_back(uuid, name);
-        }
-        
-        return result;
+  [[nodiscard]] std::vector<std::pair<uint64_t, std::string>> get_all_tracks()
+      const {
+    std::vector<std::pair<uint64_t, std::string>> result;
+    result.reserve(track_names_.size());
+
+    for (const auto& [uuid, name] : track_names_) {
+      result.emplace_back(uuid, name);
     }
 
-private:
+    return result;
+  }
+
+ private:
 };
 
 // Wrapper for track events to enable annotation chaining
 class TrackEventWrapper {
-private:
-    friend class PerfettoTraceBuilder;
-    perfetto::protos::TracePacket* packet_;
-    perfetto::protos::TrackEvent* event_;
-    detail::InterningState* interning_state_;
-    
-    explicit TrackEventWrapper(perfetto::protos::TracePacket* packet,
-                               perfetto::protos::TrackEvent* event,
-                               detail::InterningState* interning_state)
-        : packet_(packet), event_(event), interning_state_(interning_state) {}
-    
-public:
-    // Individual annotation methods
-    TrackEventWrapper& add_annotation(std::string_view key, int64_t value) {
-        auto* annotation = event_->add_debug_annotations();
-        if (interning_state_) {
-            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
-        } else {
-            annotation->set_name(std::string(key));
-        }
-        
-        // Check if this should be a pointer based on key name
-        if (detail::is_pointer_key(key)) {
-            annotation->set_pointer_value(static_cast<uint64_t>(value));
-        } else {
-            annotation->set_int_value(value);
-        }
-        
-        return *this;
+ private:
+  friend class PerfettoTraceBuilder;
+  perfetto::protos::TracePacket* packet_;
+  perfetto::protos::TrackEvent* event_;
+  detail::InterningState* interning_state_;
+
+  explicit TrackEventWrapper(perfetto::protos::TracePacket* packet,
+                             perfetto::protos::TrackEvent* event,
+                             detail::InterningState* interning_state)
+      : packet_(packet), event_(event), interning_state_(interning_state) {}
+
+ public:
+  // Individual annotation methods
+  TrackEventWrapper& add_annotation(std::string_view key, int64_t value) {
+    auto* annotation = event_->add_debug_annotations();
+    if (interning_state_) {
+      annotation->set_name_iid(
+          interning_state_->intern_debug_annotation_name(key, packet_));
+    } else {
+      annotation->set_name(std::string(key));
     }
-    
-    TrackEventWrapper& add_annotation(std::string_view key, uint64_t value) {
-        auto* annotation = event_->add_debug_annotations();
-        if (interning_state_) {
-            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
-        } else {
-            annotation->set_name(std::string(key));
-        }
-        annotation->set_pointer_value(value);
-        return *this;
+
+    // Check if this should be a pointer based on key name
+    if (detail::is_pointer_key(key)) {
+      annotation->set_pointer_value(static_cast<uint64_t>(value));
+    } else {
+      annotation->set_int_value(value);
     }
-    
-    TrackEventWrapper& add_annotation(std::string_view key, int value) {
-        return add_annotation(key, static_cast<int64_t>(value));
+
+    return *this;
+  }
+
+  TrackEventWrapper& add_annotation(std::string_view key, uint64_t value) {
+    auto* annotation = event_->add_debug_annotations();
+    if (interning_state_) {
+      annotation->set_name_iid(
+          interning_state_->intern_debug_annotation_name(key, packet_));
+    } else {
+      annotation->set_name(std::string(key));
     }
-    
-    TrackEventWrapper& add_annotation(std::string_view key, double value) {
-        auto* annotation = event_->add_debug_annotations();
-        if (interning_state_) {
-            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
-        } else {
-            annotation->set_name(std::string(key));
-        }
-        annotation->set_double_value(value);
-        return *this;
+    annotation->set_pointer_value(value);
+    return *this;
+  }
+
+  TrackEventWrapper& add_annotation(std::string_view key, int value) {
+    return add_annotation(key, static_cast<int64_t>(value));
+  }
+
+  TrackEventWrapper& add_annotation(std::string_view key, double value) {
+    auto* annotation = event_->add_debug_annotations();
+    if (interning_state_) {
+      annotation->set_name_iid(
+          interning_state_->intern_debug_annotation_name(key, packet_));
+    } else {
+      annotation->set_name(std::string(key));
     }
-    
-    TrackEventWrapper& add_annotation(std::string_view key, bool value) {
-        auto* annotation = event_->add_debug_annotations();
-        if (interning_state_) {
-            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
-        } else {
-            annotation->set_name(std::string(key));
-        }
-        annotation->set_bool_value(value);
-        return *this;
+    annotation->set_double_value(value);
+    return *this;
+  }
+
+  TrackEventWrapper& add_annotation(std::string_view key, bool value) {
+    auto* annotation = event_->add_debug_annotations();
+    if (interning_state_) {
+      annotation->set_name_iid(
+          interning_state_->intern_debug_annotation_name(key, packet_));
+    } else {
+      annotation->set_name(std::string(key));
     }
-    
-    TrackEventWrapper& add_annotation(std::string_view key, std::string_view value) {
-        auto* annotation = event_->add_debug_annotations();
-        if (interning_state_) {
-            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
-            annotation->set_string_value_iid(
-                interning_state_->intern_debug_annotation_string_value(value, packet_));
-        } else {
-            annotation->set_name(std::string(key));
-            annotation->set_string_value(std::string(value));
-        }
-        return *this;
+    annotation->set_bool_value(value);
+    return *this;
+  }
+
+  TrackEventWrapper& add_annotation(std::string_view key,
+                                    std::string_view value) {
+    auto* annotation = event_->add_debug_annotations();
+    if (interning_state_) {
+      annotation->set_name_iid(
+          interning_state_->intern_debug_annotation_name(key, packet_));
+      annotation->set_string_value_iid(
+          interning_state_->intern_debug_annotation_string_value(value,
+                                                                 packet_));
+    } else {
+      annotation->set_name(std::string(key));
+      annotation->set_string_value(std::string(value));
     }
-    
-    TrackEventWrapper& add_annotation(std::string_view key, const char* value) {
-        return add_annotation(key, std::string_view(value));
+    return *this;
+  }
+
+  TrackEventWrapper& add_annotation(std::string_view key, const char* value) {
+    return add_annotation(key, std::string_view(value));
+  }
+
+  // Pointer annotation with automatic formatting
+  TrackEventWrapper& add_pointer(std::string_view key, uint64_t address) {
+    auto* annotation = event_->add_debug_annotations();
+    if (interning_state_) {
+      annotation->set_name_iid(
+          interning_state_->intern_debug_annotation_name(key, packet_));
+    } else {
+      annotation->set_name(std::string(key));
     }
-    
-    // Pointer annotation with automatic formatting
-    TrackEventWrapper& add_pointer(std::string_view key, uint64_t address) {
-        auto* annotation = event_->add_debug_annotations();
-        if (interning_state_) {
-            annotation->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
-        } else {
-            annotation->set_name(std::string(key));
-        }
-        annotation->set_pointer_value(address);
-        return *this;
-    }
-    
-    // RAII annotation context
-    [[nodiscard]] AnnotationBuilder annotation(std::string_view name);
-    
-    // Variadic template for multiple annotations
-    template<typename... Args>
-    TrackEventWrapper& add_annotations(Args&&... args) {
-        static_assert(sizeof...(args) % 2 == 0, "Annotations must be key-value pairs");
-        add_annotations_impl(std::forward<Args>(args)...);
-        return *this;
-    }
-    
-private:
-    // Base case for recursion
-    void add_annotations_impl() {}
-    
-    // Recursive case
-    template<typename Key, typename Value, typename... Rest>
-    void add_annotations_impl(Key&& key, Value&& value, Rest&&... rest) {
-        add_annotation(std::forward<Key>(key), std::forward<Value>(value));
-        add_annotations_impl(std::forward<Rest>(rest)...);
-    }
+    annotation->set_pointer_value(address);
+    return *this;
+  }
+
+  // RAII annotation context
+  [[nodiscard]] AnnotationBuilder annotation(std::string_view name);
+
+  // Variadic template for multiple annotations
+  template <typename... Args>
+  TrackEventWrapper& add_annotations(Args&&... args) {
+    static_assert(sizeof...(args) % 2 == 0,
+                  "Annotations must be key-value pairs");
+    add_annotations_impl(std::forward<Args>(args)...);
+    return *this;
+  }
+
+ private:
+  // Base case for recursion
+  void add_annotations_impl() {}
+
+  // Recursive case
+  template <typename Key, typename Value, typename... Rest>
+  void add_annotations_impl(Key&& key, Value&& value, Rest&&... rest) {
+    add_annotation(std::forward<Key>(key), std::forward<Value>(value));
+    add_annotations_impl(std::forward<Rest>(rest)...);
+  }
 };
 
 // Builder for nested annotations
 class AnnotationBuilder {
-private:
-    friend class TrackEventWrapper;
-    perfetto::protos::DebugAnnotation* annotation_;
-    perfetto::protos::TracePacket* packet_;
-    detail::InterningState* interning_state_;
+ private:
+  friend class TrackEventWrapper;
+  perfetto::protos::DebugAnnotation* annotation_;
+  perfetto::protos::TracePacket* packet_;
+  detail::InterningState* interning_state_;
 
-    AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation,
-                      perfetto::protos::TracePacket* packet,
-                      detail::InterningState* interning_state)
-        : annotation_(annotation)
-        , packet_(packet)
-        , interning_state_(interning_state) {}
+  AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation,
+                    perfetto::protos::TracePacket* packet,
+                    detail::InterningState* interning_state)
+      : annotation_(annotation),
+        packet_(packet),
+        interning_state_(interning_state) {}
 
-    perfetto::protos::DebugAnnotation* add_entry(std::string_view key) {
-        if (annotation_) {
-            auto* entry = annotation_->add_dict_entries();
-            if (interning_state_) {
-                entry->set_name_iid(interning_state_->intern_debug_annotation_name(key, packet_));
-            } else {
-                entry->set_name(std::string(key));
-            }
-            return entry;
-        }
-        return nullptr;
+  perfetto::protos::DebugAnnotation* add_entry(std::string_view key) {
+    if (annotation_) {
+      auto* entry = annotation_->add_dict_entries();
+      if (interning_state_) {
+        entry->set_name_iid(
+            interning_state_->intern_debug_annotation_name(key, packet_));
+      } else {
+        entry->set_name(std::string(key));
+      }
+      return entry;
     }
+    return nullptr;
+  }
 
-public:
-    explicit AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation)
-        : AnnotationBuilder(annotation, nullptr, nullptr) {}
+ public:
+  explicit AnnotationBuilder(perfetto::protos::DebugAnnotation* annotation)
+      : AnnotationBuilder(annotation, nullptr, nullptr) {}
 
-    // Typed annotation methods
-    AnnotationBuilder& integer(std::string_view key, int64_t value) {
-        if (auto* entry = add_entry(key)) {
-            entry->set_int_value(value);
-        }
-        return *this;
+  // Typed annotation methods
+  AnnotationBuilder& integer(std::string_view key, int64_t value) {
+    if (auto* entry = add_entry(key)) {
+      entry->set_int_value(value);
     }
+    return *this;
+  }
 
-    AnnotationBuilder& floating(std::string_view key, double value) {
-        if (auto* entry = add_entry(key)) {
-            entry->set_double_value(value);
-        }
-        return *this;
+  AnnotationBuilder& floating(std::string_view key, double value) {
+    if (auto* entry = add_entry(key)) {
+      entry->set_double_value(value);
     }
+    return *this;
+  }
 
-    AnnotationBuilder& boolean(std::string_view key, bool value) {
-        if (auto* entry = add_entry(key)) {
-            entry->set_bool_value(value);
-        }
-        return *this;
+  AnnotationBuilder& boolean(std::string_view key, bool value) {
+    if (auto* entry = add_entry(key)) {
+      entry->set_bool_value(value);
     }
+    return *this;
+  }
 
-    AnnotationBuilder& string(std::string_view key, std::string_view value) {
-        if (auto* entry = add_entry(key)) {
-            if (interning_state_) {
-                entry->set_string_value_iid(
-                    interning_state_->intern_debug_annotation_string_value(value, packet_));
-            } else {
-                entry->set_string_value(std::string(value));
-            }
-        }
-        return *this;
+  AnnotationBuilder& string(std::string_view key, std::string_view value) {
+    if (auto* entry = add_entry(key)) {
+      if (interning_state_) {
+        entry->set_string_value_iid(
+            interning_state_->intern_debug_annotation_string_value(value,
+                                                                   packet_));
+      } else {
+        entry->set_string_value(std::string(value));
+      }
     }
+    return *this;
+  }
 
-    AnnotationBuilder& pointer(std::string_view key, uint64_t address) {
-        if (auto* entry = add_entry(key)) {
-            entry->set_pointer_value(address);
-        }
-        return *this;
+  AnnotationBuilder& pointer(std::string_view key, uint64_t address) {
+    if (auto* entry = add_entry(key)) {
+      entry->set_pointer_value(address);
     }
+    return *this;
+  }
 
-    // Nested annotations - creates another level
-    [[nodiscard]] AnnotationBuilder nested(std::string_view key) {
-        if (auto* entry = add_entry(key)) {
-            return AnnotationBuilder(entry, packet_, interning_state_);
-        }
-        return AnnotationBuilder(nullptr, nullptr, nullptr);
+  // Nested annotations - creates another level
+  [[nodiscard]] AnnotationBuilder nested(std::string_view key) {
+    if (auto* entry = add_entry(key)) {
+      return AnnotationBuilder(entry, packet_, interning_state_);
     }
+    return AnnotationBuilder(nullptr, nullptr, nullptr);
+  }
 };
 
 // Implementation of deferred methods
-inline TrackEventWrapper PerfettoTraceBuilder::begin_slice(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns) {
-    auto* packet = create_packet(timestamp_ns);
-    
-    auto* event = packet->mutable_track_event();
-    event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_BEGIN);
-    event->set_track_uuid(track_uuid);
-    event->set_name_iid(interning_state_.intern_event_name(name, packet));
-    
-    return TrackEventWrapper(packet, event, &interning_state_);
+inline TrackEventWrapper PerfettoTraceBuilder::begin_slice(
+    uint64_t track_uuid,
+    std::string_view name,
+    uint64_t timestamp_ns) {
+  auto* packet = create_packet(timestamp_ns);
+
+  auto* event = packet->mutable_track_event();
+  event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_BEGIN);
+  event->set_track_uuid(track_uuid);
+  event->set_name_iid(interning_state_.intern_event_name(name, packet));
+
+  return TrackEventWrapper(packet, event, &interning_state_);
 }
 
-inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns) {
-    auto* packet = create_packet(timestamp_ns);
-    
-    auto* event = packet->mutable_track_event();
-    event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
-    event->set_track_uuid(track_uuid);
-    event->set_name_iid(interning_state_.intern_event_name(name, packet));
-    
-    return TrackEventWrapper(packet, event, &interning_state_);
+inline TrackEventWrapper PerfettoTraceBuilder::add_instant_event(
+    uint64_t track_uuid,
+    std::string_view name,
+    uint64_t timestamp_ns) {
+  auto* packet = create_packet(timestamp_ns);
+
+  auto* event = packet->mutable_track_event();
+  event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
+  event->set_track_uuid(track_uuid);
+  event->set_name_iid(interning_state_.intern_event_name(name, packet));
+
+  return TrackEventWrapper(packet, event, &interning_state_);
 }
 
-inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid, std::string_view name, uint64_t timestamp_ns,
-                                                         uint64_t flow_id, bool terminating) {
-    auto* packet = create_packet(timestamp_ns);
-    
-    auto* event = packet->mutable_track_event();
-    event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
-    event->set_track_uuid(track_uuid);
-    event->set_name_iid(interning_state_.intern_event_name(name, packet));
-    
-    if (terminating) {
-        event->add_terminating_flow_ids(flow_id);
-    } else {
-        event->add_flow_ids(flow_id);
-    }
-    
-    return TrackEventWrapper(packet, event, &interning_state_);
+inline TrackEventWrapper PerfettoTraceBuilder::add_flow(uint64_t track_uuid,
+                                                        std::string_view name,
+                                                        uint64_t timestamp_ns,
+                                                        uint64_t flow_id,
+                                                        bool terminating) {
+  auto* packet = create_packet(timestamp_ns);
+
+  auto* event = packet->mutable_track_event();
+  event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
+  event->set_track_uuid(track_uuid);
+  event->set_name_iid(interning_state_.intern_event_name(name, packet));
+
+  if (terminating) {
+    event->add_terminating_flow_ids(flow_id);
+  } else {
+    event->add_flow_ids(flow_id);
+  }
+
+  return TrackEventWrapper(packet, event, &interning_state_);
 }
 
 inline AnnotationBuilder TrackEventWrapper::annotation(std::string_view name) {
-    auto* annotation = event_->add_debug_annotations();
-    if (interning_state_) {
-        annotation->set_name_iid(interning_state_->intern_debug_annotation_name(name, packet_));
-        return AnnotationBuilder(annotation, packet_, interning_state_);
-    }
-    annotation->set_name(std::string(name));
-    return AnnotationBuilder(annotation);
+  auto* annotation = event_->add_debug_annotations();
+  if (interning_state_) {
+    annotation->set_name_iid(
+        interning_state_->intern_debug_annotation_name(name, packet_));
+    return AnnotationBuilder(annotation, packet_, interning_state_);
+  }
+  annotation->set_name(std::string(name));
+  return AnnotationBuilder(annotation);
 }
 
 // Resolve interned IDs to inline strings in-place (for debugging/diff tooling).
-inline void resolve_interned_trace_inplace(perfetto::protos::Trace& trace)
-{
-    std::unordered_map<uint32_t, detail::SequenceInternTables> tables_by_sequence = {};
+inline void resolve_interned_trace_inplace(perfetto::protos::Trace& trace) {
+  std::unordered_map<uint32_t, detail::SequenceInternTables>
+      tables_by_sequence = {};
 
-    for (auto& packet : *trace.mutable_packet()) {
-        const auto flags = packet.sequence_flags();
-        detail::SequenceInternTables* tables = nullptr;
-        const bool has_valid_sequence_id = packet.has_trusted_packet_sequence_id() &&
-                                           packet.trusted_packet_sequence_id() != 0;
+  for (auto& packet : *trace.mutable_packet()) {
+    const auto flags = packet.sequence_flags();
+    detail::SequenceInternTables* tables = nullptr;
+    const bool has_valid_sequence_id =
+        packet.has_trusted_packet_sequence_id() &&
+        packet.trusted_packet_sequence_id() != 0;
 
-        if (has_valid_sequence_id) {
-            auto& sequence_tables = tables_by_sequence[packet.trusted_packet_sequence_id()];
-            tables = &sequence_tables;
+    if (has_valid_sequence_id) {
+      auto& sequence_tables =
+          tables_by_sequence[packet.trusted_packet_sequence_id()];
+      tables = &sequence_tables;
 
-            if (packet.previous_packet_dropped()) {
-                tables->clear(false);
-            }
+      if (packet.previous_packet_dropped()) {
+        tables->clear(false);
+      }
 
-            if ((flags & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
-                tables->clear(true);
-            }
+      if ((flags &
+           perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
+        tables->clear(true);
+      }
 
-            if (packet.has_interned_data()) {
-                const auto& interned = packet.interned_data();
-                for (const auto& entry : interned.event_names()) {
-                    tables->event_names[entry.iid()] = entry.name();
-                }
-                for (const auto& entry : interned.debug_annotation_names()) {
-                    tables->debug_annotation_names[entry.iid()] = entry.name();
-                }
-                for (const auto& entry : interned.debug_annotation_string_values()) {
-                    tables->debug_annotation_string_values[entry.iid()] = entry.str();
-                }
-            }
+      if (packet.has_interned_data()) {
+        const auto& interned = packet.interned_data();
+        for (const auto& entry : interned.event_names()) {
+          tables->event_names[entry.iid()] = entry.name();
         }
-
-        if (!packet.has_track_event()) {
-            continue;
+        for (const auto& entry : interned.debug_annotation_names()) {
+          tables->debug_annotation_names[entry.iid()] = entry.name();
         }
-        if (!tables) {
-            continue;
+        for (const auto& entry : interned.debug_annotation_string_values()) {
+          tables->debug_annotation_string_values[entry.iid()] = entry.str();
         }
-
-        const bool needs_state =
-                (flags & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0;
-        if (needs_state && !tables->valid) {
-            continue;
-        }
-
-        auto* event = packet.mutable_track_event();
-        if (event->name_field_case() == perfetto::protos::TrackEvent::kNameIid) {
-            const auto iid = event->name_iid();
-            const auto it = tables->event_names.find(iid);
-            event->set_name(it != tables->event_names.end()
-                                    ? it->second
-                                    : detail::make_missing_iid_string("EventName", iid));
-        }
-
-        for (auto& annotation : *event->mutable_debug_annotations()) {
-            detail::resolve_debug_annotation_inplace(annotation, *tables);
-        }
+      }
     }
+
+    if (!packet.has_track_event()) {
+      continue;
+    }
+    if (!tables) {
+      continue;
+    }
+
+    const bool needs_state =
+        (flags & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) !=
+        0;
+    if (needs_state && !tables->valid) {
+      continue;
+    }
+
+    auto* event = packet.mutable_track_event();
+    if (event->name_field_case() == perfetto::protos::TrackEvent::kNameIid) {
+      const auto iid = event->name_iid();
+      const auto it = tables->event_names.find(iid);
+      event->set_name(it != tables->event_names.end()
+                          ? it->second
+                          : detail::make_missing_iid_string("EventName", iid));
+    }
+
+    for (auto& annotation : *event->mutable_debug_annotations()) {
+      detail::resolve_debug_annotation_inplace(annotation, *tables);
+    }
+  }
 }
 
 // Return a copy with interned IDs resolved to inline strings.
-[[nodiscard]] inline perfetto::protos::Trace
-resolve_interned_trace(const perfetto::protos::Trace& trace)
-{
-    auto resolved = trace;
-    resolve_interned_trace_inplace(resolved);
-    return resolved;
+[[nodiscard]] inline perfetto::protos::Trace resolve_interned_trace(
+    const perfetto::protos::Trace& trace) {
+  auto resolved = trace;
+  resolve_interned_trace_inplace(resolved);
+  return resolved;
 }
 
-} // namespace retrobus
+}  // namespace retrobus

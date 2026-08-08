@@ -192,7 +192,3 @@ shared name.
 - Kernel scheduling, IRQ, and PM tracing should continue to use native Linux
   tracepoints. Convert and correlate those records rather than putting this
   userspace writer in the kernel.
-
-Redux `.rdxt` version 1 is a predecessor with a producer-specific header and
-schema. The Python decoder retains an explicit compatibility path; `.rdxt`
-files are never treated as `.rbct` merely by extension.

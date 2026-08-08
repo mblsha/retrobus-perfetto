@@ -67,8 +67,8 @@ summary = convert_compact_trace(
 
 `CompactTraceReader.iter_items()` validates and yields one bounded chunk at a
 time. `read_compact_trace()` collects a complete decoded model when host memory
-is not constrained. The same entry point recognizes legacy Redux `.rdxt`
-version 1, but still requires the exact external producer schema.
+is not constrained. Both entry points require the exact external producer
+schema identified by the capture header.
 
 ### Direct Proto Access
 

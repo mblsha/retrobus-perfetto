@@ -1,662 +1,669 @@
+#include <google/protobuf/text_format.h>
 #include <catch2/catch_test_macros.hpp>
-#include <retrobus/retrobus_perfetto.hpp>
 #include <filesystem>
 #include <fstream>
+#include <retrobus/retrobus_perfetto.hpp>
 #include <set>
 #include <unordered_map>
-#include <google/protobuf/text_format.h>
 
 using namespace retrobus;
 
 // Helper function to convert builder output to textproto string
 std::string to_textproto(const PerfettoTraceBuilder& builder) {
-    auto data = builder.serialize();
-    
-    perfetto::protos::Trace trace;
-    if (!trace.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
-        return "ERROR: Failed to parse trace data";
-    }
+  auto data = builder.serialize();
 
-    // Snapshot canonicalization: resolve interned IDs and remove
-    // sequence/interning metadata so snapshots stay semantically focused.
-    resolve_interned_trace_inplace(trace);
-    for (auto& packet : *trace.mutable_packet()) {
-        packet.clear_sequence_flags();
-        packet.clear_interned_data();
-    }
-    
-    std::string textproto;
-    google::protobuf::TextFormat::PrintToString(trace, &textproto);
-    return textproto;
+  perfetto::protos::Trace trace;
+  if (!trace.ParseFromArray(data.data(), static_cast<int>(data.size()))) {
+    return "ERROR: Failed to parse trace data";
+  }
+
+  // Snapshot canonicalization: resolve interned IDs and remove
+  // sequence/interning metadata so snapshots stay semantically focused.
+  resolve_interned_trace_inplace(trace);
+  for (auto& packet : *trace.mutable_packet()) {
+    packet.clear_sequence_flags();
+    packet.clear_interned_data();
+  }
+
+  std::string textproto;
+  google::protobuf::TextFormat::PrintToString(trace, &textproto);
+  return textproto;
 }
 
 void require_annotation_uses_interned_strings(
     const perfetto::protos::DebugAnnotation& annotation) {
-    REQUIRE(!annotation.has_name());
-    REQUIRE(annotation.name_field_case() !=
-            perfetto::protos::DebugAnnotation::kName);
-    REQUIRE(annotation.value_case() !=
-            perfetto::protos::DebugAnnotation::kStringValue);
-    REQUIRE(annotation.proto_type_descriptor_case() !=
-            perfetto::protos::DebugAnnotation::kProtoTypeName);
-    REQUIRE(!annotation.has_nested_value());
-    for (const auto& entry : annotation.dict_entries()) {
-        require_annotation_uses_interned_strings(entry);
-    }
-    for (const auto& entry : annotation.array_values()) {
-        require_annotation_uses_interned_strings(entry);
-    }
+  REQUIRE(!annotation.has_name());
+  REQUIRE(annotation.name_field_case() !=
+          perfetto::protos::DebugAnnotation::kName);
+  REQUIRE(annotation.value_case() !=
+          perfetto::protos::DebugAnnotation::kStringValue);
+  REQUIRE(annotation.proto_type_descriptor_case() !=
+          perfetto::protos::DebugAnnotation::kProtoTypeName);
+  REQUIRE(!annotation.has_nested_value());
+  for (const auto& entry : annotation.dict_entries()) {
+    require_annotation_uses_interned_strings(entry);
+  }
+  for (const auto& entry : annotation.array_values()) {
+    require_annotation_uses_interned_strings(entry);
+  }
 }
 
 void require_track_events_use_interned_strings(
     const perfetto::protos::Trace& trace) {
-    for (const auto& packet : trace.packet()) {
-        if (!packet.has_track_event()) {
-            continue;
-        }
-        const auto& event = packet.track_event();
-        REQUIRE(event.categories_size() == 0);
-        REQUIRE(!event.has_name());
-        REQUIRE(event.name_field_case() != perfetto::protos::TrackEvent::kName);
-        for (const auto& annotation : event.debug_annotations()) {
-            require_annotation_uses_interned_strings(annotation);
-        }
+  for (const auto& packet : trace.packet()) {
+    if (!packet.has_track_event()) {
+      continue;
     }
+    const auto& event = packet.track_event();
+    REQUIRE(event.categories_size() == 0);
+    REQUIRE(!event.has_name());
+    REQUIRE(event.name_field_case() != perfetto::protos::TrackEvent::kName);
+    for (const auto& annotation : event.debug_annotations()) {
+      require_annotation_uses_interned_strings(annotation);
+    }
+  }
 }
 
 TEST_CASE("PerfettoTraceBuilder construction", "[builder]") {
-    SECTION("Default constructor") {
-        PerfettoTraceBuilder builder("TestProcess");
-        
-        // Should be able to serialize even empty trace
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
-    
-    SECTION("Custom PID") {
-        PerfettoTraceBuilder builder("TestProcess", 5678);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
+  SECTION("Default constructor") {
+    PerfettoTraceBuilder builder("TestProcess");
+
+    // Should be able to serialize even empty trace
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
+
+  SECTION("Custom PID") {
+    PerfettoTraceBuilder builder("TestProcess", 5678);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
 }
 
 TEST_CASE("Track management", "[builder][tracks]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    
-    SECTION("Add thread") {
-        auto thread_id = builder.add_thread("TestThread");
-        REQUIRE(thread_id > 0);
-        
-        // Check metadata
-        auto track_name = builder.get_track_name(thread_id);
-        REQUIRE(track_name.has_value());
-        REQUIRE(track_name.value() == "TestThread");
+  PerfettoTraceBuilder builder("TestProcess");
+
+  SECTION("Add thread") {
+    auto thread_id = builder.add_thread("TestThread");
+    REQUIRE(thread_id > 0);
+
+    // Check metadata
+    auto track_name = builder.get_track_name(thread_id);
+    REQUIRE(track_name.has_value());
+    REQUIRE(track_name.value() == "TestThread");
+  }
+
+  SECTION("Add multiple threads") {
+    auto thread1 = builder.add_thread("Thread1");
+    auto thread2 = builder.add_thread("Thread2");
+
+    REQUIRE(thread1 != thread2);
+    REQUIRE(thread1 > 0);
+    REQUIRE(thread2 > 0);
+  }
+
+  SECTION("Add counter track") {
+    auto counter = builder.add_counter_track("Memory", "MB");
+    REQUIRE(counter > 0);
+
+    auto track_name = builder.get_track_name(counter);
+    REQUIRE(track_name.has_value());
+    REQUIRE(track_name.value() == "Memory");
+  }
+
+  SECTION("Get all tracks") {
+    auto thread1 = builder.add_thread("Thread1");
+    auto thread2 = builder.add_thread("Thread2");
+    auto counter = builder.add_counter_track("CPU", "%");
+
+    auto tracks = builder.get_all_tracks();
+    REQUIRE(tracks.size() == 4);  // Process + 3 tracks
+
+    // Verify all tracks are present
+    bool found_thread1 = false, found_thread2 = false, found_counter = false;
+    for (const auto& [uuid, name] : tracks) {
+      if (name == "Thread1")
+        found_thread1 = true;
+      if (name == "Thread2")
+        found_thread2 = true;
+      if (name == "CPU")
+        found_counter = true;
     }
-    
-    SECTION("Add multiple threads") {
-        auto thread1 = builder.add_thread("Thread1");
-        auto thread2 = builder.add_thread("Thread2");
-        
-        REQUIRE(thread1 != thread2);
-        REQUIRE(thread1 > 0);
-        REQUIRE(thread2 > 0);
-    }
-    
-    SECTION("Add counter track") {
-        auto counter = builder.add_counter_track("Memory", "MB");
-        REQUIRE(counter > 0);
-        
-        auto track_name = builder.get_track_name(counter);
-        REQUIRE(track_name.has_value());
-        REQUIRE(track_name.value() == "Memory");
-    }
-    
-    SECTION("Get all tracks") {
-        auto thread1 = builder.add_thread("Thread1");
-        auto thread2 = builder.add_thread("Thread2");
-        auto counter = builder.add_counter_track("CPU", "%");
-        
-        auto tracks = builder.get_all_tracks();
-        REQUIRE(tracks.size() == 4); // Process + 3 tracks
-        
-        // Verify all tracks are present
-        bool found_thread1 = false, found_thread2 = false, found_counter = false;
-        for (const auto& [uuid, name] : tracks) {
-            if (name == "Thread1") found_thread1 = true;
-            if (name == "Thread2") found_thread2 = true;
-            if (name == "CPU") found_counter = true;
-        }
-        
-        REQUIRE(found_thread1);
-        REQUIRE(found_thread2);
-        REQUIRE(found_counter);
-    }
+
+    REQUIRE(found_thread1);
+    REQUIRE(found_thread2);
+    REQUIRE(found_counter);
+  }
 }
 
 TEST_CASE("Slice events", "[builder][events]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    auto thread = builder.add_thread("TestThread");
-    
-    SECTION("Basic slice") {
-        builder.begin_slice(thread, "test_function", 1000);
-        builder.end_slice(thread, 2000);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
-    
-    SECTION("Slice with annotations") {
-        auto event = builder.begin_slice(thread, "test_function", 1000);
-        event.add_annotation("arg1", 42)
-             .add_annotation("arg2", 3.14)
-             .add_annotation("arg3", true)
-             .add_annotation("arg4", "hello");
-        
-        builder.end_slice(thread, 2000);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
-    
-    SECTION("Nested slices") {
-        builder.begin_slice(thread, "outer", 1000);
-        builder.begin_slice(thread, "inner", 1100);
-        builder.end_slice(thread, 1200);
-        builder.end_slice(thread, 1300);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
+  PerfettoTraceBuilder builder("TestProcess");
+  auto thread = builder.add_thread("TestThread");
+
+  SECTION("Basic slice") {
+    builder.begin_slice(thread, "test_function", 1000);
+    builder.end_slice(thread, 2000);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
+
+  SECTION("Slice with annotations") {
+    auto event = builder.begin_slice(thread, "test_function", 1000);
+    event.add_annotation("arg1", 42)
+        .add_annotation("arg2", 3.14)
+        .add_annotation("arg3", true)
+        .add_annotation("arg4", "hello");
+
+    builder.end_slice(thread, 2000);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
+
+  SECTION("Nested slices") {
+    builder.begin_slice(thread, "outer", 1000);
+    builder.begin_slice(thread, "inner", 1100);
+    builder.end_slice(thread, 1200);
+    builder.end_slice(thread, 1300);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
 }
 
 TEST_CASE("Instant events", "[builder][events]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    auto thread = builder.add_thread("TestThread");
-    
-    SECTION("Basic instant event") {
-        builder.add_instant_event(thread, "test_event", 1500);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
-    
-    SECTION("Instant event with annotations") {
-        auto event = builder.add_instant_event(thread, "io_operation", 1500);
-        event.add_annotation("port", 0x80)
-             .add_annotation("value", 0xFF);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
+  PerfettoTraceBuilder builder("TestProcess");
+  auto thread = builder.add_thread("TestThread");
+
+  SECTION("Basic instant event") {
+    builder.add_instant_event(thread, "test_event", 1500);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
+
+  SECTION("Instant event with annotations") {
+    auto event = builder.add_instant_event(thread, "io_operation", 1500);
+    event.add_annotation("port", 0x80).add_annotation("value", 0xFF);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
 }
 
 TEST_CASE("Flow events", "[builder][events]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    auto thread1 = builder.add_thread("Thread1");
-    auto thread2 = builder.add_thread("Thread2");
-    
-    SECTION("Basic flow") {
-        uint64_t flow_id = 12345;
-        
-        builder.add_flow(thread1, "Send", 1000, flow_id);
-        builder.add_flow(thread2, "Receive", 2000, flow_id, true);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
+  PerfettoTraceBuilder builder("TestProcess");
+  auto thread1 = builder.add_thread("Thread1");
+  auto thread2 = builder.add_thread("Thread2");
+
+  SECTION("Basic flow") {
+    uint64_t flow_id = 12345;
+
+    builder.add_flow(thread1, "Send", 1000, flow_id);
+    builder.add_flow(thread2, "Receive", 2000, flow_id, true);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
 }
 
 TEST_CASE("Counter updates", "[builder][counters]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    auto counter = builder.add_counter_track("Memory", "KB");
-    
-    SECTION("Integer counter values") {
-        builder.update_counter(counter, 1024, 1000);
-        builder.update_counter(counter, 2048, 2000);
-        builder.update_counter(counter, 1536, 3000);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
-    
-    SECTION("Floating point counter values") {
-        builder.update_counter(counter, 1024.5, 1000);
-        builder.update_counter(counter, 2048.75, 2000);
-        builder.update_counter(counter, 1536.25, 3000);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
+  PerfettoTraceBuilder builder("TestProcess");
+  auto counter = builder.add_counter_track("Memory", "KB");
+
+  SECTION("Integer counter values") {
+    builder.update_counter(counter, 1024, 1000);
+    builder.update_counter(counter, 2048, 2000);
+    builder.update_counter(counter, 1536, 3000);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
+
+  SECTION("Floating point counter values") {
+    builder.update_counter(counter, 1024.5, 1000);
+    builder.update_counter(counter, 2048.75, 2000);
+    builder.update_counter(counter, 1536.25, 3000);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
 }
 
 TEST_CASE("FrameTimeline events", "[builder][frame-timeline]") {
-    PerfettoTraceBuilder builder("FrameProcess", 4321);
+  PerfettoTraceBuilder builder("FrameProcess", 4321);
 
-    FrameTimelineExpectedSurfaceFrameStart expected_surface;
-    expected_surface.cookie = 11;
-    expected_surface.token = 101;
-    expected_surface.display_frame_token = 201;
-    expected_surface.layer_name = "RFIRE";
-    builder.add_frame_timeline_expected_surface_start(1000,
-                                                      expected_surface);
+  FrameTimelineExpectedSurfaceFrameStart expected_surface;
+  expected_surface.cookie = 11;
+  expected_surface.token = 101;
+  expected_surface.display_frame_token = 201;
+  expected_surface.layer_name = "RFIRE";
+  builder.add_frame_timeline_expected_surface_start(1000, expected_surface);
 
-    FrameTimelineActualSurfaceFrameStart actual_surface;
-    actual_surface.cookie = 12;
-    actual_surface.token = 102;
-    actual_surface.display_frame_token = 202;
-    actual_surface.layer_name = "RFIRE";
-    actual_surface.present_type =
-        perfetto::protos::FrameTimelineEvent::PRESENT_LATE;
-    actual_surface.on_time_finish = false;
-    actual_surface.gpu_composition = true;
-    actual_surface.jank_type =
-        perfetto::protos::FrameTimelineEvent::JANK_APP_DEADLINE_MISSED;
-    actual_surface.prediction_type =
-        perfetto::protos::FrameTimelineEvent::PREDICTION_VALID;
-    actual_surface.is_buffer = true;
-    actual_surface.jank_severity_type =
-        perfetto::protos::FrameTimelineEvent::SEVERITY_FULL;
-    actual_surface.present_delay_millis = 16.6f;
-    actual_surface.vsync_resynced_jitter_millis = 0.5f;
-    actual_surface.jank_severity_score = 1.0f;
-    actual_surface.latched_fence_state = perfetto::protos::
-        FrameTimelineEvent::ActualSurfaceFrameStart::LATCHED_SIGNALED;
-    actual_surface.animation_time_millis = 33.3f;
-    builder.add_frame_timeline_actual_surface_start(1100, actual_surface);
+  FrameTimelineActualSurfaceFrameStart actual_surface;
+  actual_surface.cookie = 12;
+  actual_surface.token = 102;
+  actual_surface.display_frame_token = 202;
+  actual_surface.layer_name = "RFIRE";
+  actual_surface.present_type =
+      perfetto::protos::FrameTimelineEvent::PRESENT_LATE;
+  actual_surface.on_time_finish = false;
+  actual_surface.gpu_composition = true;
+  actual_surface.jank_type =
+      perfetto::protos::FrameTimelineEvent::JANK_APP_DEADLINE_MISSED;
+  actual_surface.prediction_type =
+      perfetto::protos::FrameTimelineEvent::PREDICTION_VALID;
+  actual_surface.is_buffer = true;
+  actual_surface.jank_severity_type =
+      perfetto::protos::FrameTimelineEvent::SEVERITY_FULL;
+  actual_surface.present_delay_millis = 16.6f;
+  actual_surface.vsync_resynced_jitter_millis = 0.5f;
+  actual_surface.jank_severity_score = 1.0f;
+  actual_surface.latched_fence_state = perfetto::protos::FrameTimelineEvent::
+      ActualSurfaceFrameStart::LATCHED_SIGNALED;
+  actual_surface.animation_time_millis = 33.3f;
+  builder.add_frame_timeline_actual_surface_start(1100, actual_surface);
 
-    FrameTimelineExpectedDisplayFrameStart expected_display;
-    expected_display.cookie = 21;
-    expected_display.token = 201;
-    expected_display.pid = 9999;
-    builder.add_frame_timeline_expected_display_start(1200,
-                                                      expected_display);
+  FrameTimelineExpectedDisplayFrameStart expected_display;
+  expected_display.cookie = 21;
+  expected_display.token = 201;
+  expected_display.pid = 9999;
+  builder.add_frame_timeline_expected_display_start(1200, expected_display);
 
-    FrameTimelineActualDisplayFrameStart actual_display;
-    actual_display.cookie = 22;
-    actual_display.token = 202;
-    actual_display.pid = 9999;
-    actual_display.present_type =
-        perfetto::protos::FrameTimelineEvent::PRESENT_ON_TIME;
-    actual_display.on_time_finish = true;
-    actual_display.gpu_composition = false;
-    actual_display.jank_type = perfetto::protos::FrameTimelineEvent::JANK_NONE;
-    actual_display.prediction_type =
-        perfetto::protos::FrameTimelineEvent::PREDICTION_VALID;
-    actual_display.jank_severity_type =
-        perfetto::protos::FrameTimelineEvent::SEVERITY_NONE;
-    actual_display.present_delay_millis = 0.0f;
-    actual_display.latched_unsignaled_count = 2;
-    actual_display.addressable_unsignaled_latch_count = 1;
-    builder.add_frame_timeline_actual_display_start(1300, actual_display);
+  FrameTimelineActualDisplayFrameStart actual_display;
+  actual_display.cookie = 22;
+  actual_display.token = 202;
+  actual_display.pid = 9999;
+  actual_display.present_type =
+      perfetto::protos::FrameTimelineEvent::PRESENT_ON_TIME;
+  actual_display.on_time_finish = true;
+  actual_display.gpu_composition = false;
+  actual_display.jank_type = perfetto::protos::FrameTimelineEvent::JANK_NONE;
+  actual_display.prediction_type =
+      perfetto::protos::FrameTimelineEvent::PREDICTION_VALID;
+  actual_display.jank_severity_type =
+      perfetto::protos::FrameTimelineEvent::SEVERITY_NONE;
+  actual_display.present_delay_millis = 0.0f;
+  actual_display.latched_unsignaled_count = 2;
+  actual_display.addressable_unsignaled_latch_count = 1;
+  builder.add_frame_timeline_actual_display_start(1300, actual_display);
 
-    builder.end_frame_timeline(1400, 11);
-    builder.end_frame_timeline(1500, 12);
-    builder.end_frame_timeline(1600, 21);
-    builder.end_frame_timeline(1700, 22);
+  builder.end_frame_timeline(1400, 11);
+  builder.end_frame_timeline(1500, 12);
+  builder.end_frame_timeline(1600, 21);
+  builder.end_frame_timeline(1700, 22);
 
-    perfetto::protos::Trace trace;
-    const auto data = builder.serialize();
-    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  perfetto::protos::Trace trace;
+  const auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
 
-    bool saw_expected_surface = false;
-    bool saw_actual_surface = false;
-    bool saw_expected_display = false;
-    bool saw_actual_display = false;
-    std::set<int64_t> end_cookies;
+  bool saw_expected_surface = false;
+  bool saw_actual_surface = false;
+  bool saw_expected_display = false;
+  bool saw_actual_display = false;
+  std::set<int64_t> end_cookies;
 
-    for (const auto& packet : trace.packet()) {
-        if (!packet.has_frame_timeline_event()) {
-            continue;
-        }
-        const auto& event = packet.frame_timeline_event();
-        switch (event.event_case()) {
-        case perfetto::protos::FrameTimelineEvent::kExpectedSurfaceFrameStart: {
-            const auto& frame = event.expected_surface_frame_start();
-            REQUIRE(packet.timestamp() == 1000);
-            REQUIRE(frame.cookie() == 11);
-            REQUIRE(frame.token() == 101);
-            REQUIRE(frame.display_frame_token() == 201);
-            REQUIRE(frame.pid() == 4321);
-            REQUIRE(frame.layer_name() == "RFIRE");
-            saw_expected_surface = true;
-            break;
-        }
-        case perfetto::protos::FrameTimelineEvent::kActualSurfaceFrameStart: {
-            const auto& frame = event.actual_surface_frame_start();
-            REQUIRE(packet.timestamp() == 1100);
-            REQUIRE(frame.cookie() == 12);
-            REQUIRE(frame.token() == 102);
-            REQUIRE(frame.display_frame_token() == 202);
-            REQUIRE(frame.pid() == 4321);
-            REQUIRE(frame.present_type() ==
-                    perfetto::protos::FrameTimelineEvent::PRESENT_LATE);
-            REQUIRE_FALSE(frame.on_time_finish());
-            REQUIRE(frame.gpu_composition());
-            REQUIRE(frame.jank_type() ==
-                    perfetto::protos::FrameTimelineEvent::
-                        JANK_APP_DEADLINE_MISSED);
-            REQUIRE(frame.prediction_type() ==
-                    perfetto::protos::FrameTimelineEvent::PREDICTION_VALID);
-            REQUIRE(frame.jank_severity_type() ==
-                    perfetto::protos::FrameTimelineEvent::SEVERITY_FULL);
-            REQUIRE(frame.latched_fence_state() ==
-                    perfetto::protos::FrameTimelineEvent::
-                        ActualSurfaceFrameStart::LATCHED_SIGNALED);
-            saw_actual_surface = true;
-            break;
-        }
-        case perfetto::protos::FrameTimelineEvent::kExpectedDisplayFrameStart: {
-            const auto& frame = event.expected_display_frame_start();
-            REQUIRE(packet.timestamp() == 1200);
-            REQUIRE(frame.cookie() == 21);
-            REQUIRE(frame.token() == 201);
-            REQUIRE(frame.pid() == 9999);
-            saw_expected_display = true;
-            break;
-        }
-        case perfetto::protos::FrameTimelineEvent::kActualDisplayFrameStart: {
-            const auto& frame = event.actual_display_frame_start();
-            REQUIRE(packet.timestamp() == 1300);
-            REQUIRE(frame.cookie() == 22);
-            REQUIRE(frame.token() == 202);
-            REQUIRE(frame.pid() == 9999);
-            REQUIRE(frame.present_type() ==
-                    perfetto::protos::FrameTimelineEvent::PRESENT_ON_TIME);
-            REQUIRE(frame.on_time_finish());
-            REQUIRE_FALSE(frame.gpu_composition());
-            REQUIRE(frame.jank_type() ==
-                    perfetto::protos::FrameTimelineEvent::JANK_NONE);
-            REQUIRE(frame.latched_unsignaled_count() == 2);
-            REQUIRE(frame.addressable_unsignaled_latch_count() == 1);
-            saw_actual_display = true;
-            break;
-        }
-        case perfetto::protos::FrameTimelineEvent::kFrameEnd:
-            end_cookies.insert(event.frame_end().cookie());
-            break;
-        case perfetto::protos::FrameTimelineEvent::EVENT_NOT_SET:
-            break;
-        }
+  for (const auto& packet : trace.packet()) {
+    if (!packet.has_frame_timeline_event()) {
+      continue;
     }
+    const auto& event = packet.frame_timeline_event();
+    switch (event.event_case()) {
+      case perfetto::protos::FrameTimelineEvent::kExpectedSurfaceFrameStart: {
+        const auto& frame = event.expected_surface_frame_start();
+        REQUIRE(packet.timestamp() == 1000);
+        REQUIRE(frame.cookie() == 11);
+        REQUIRE(frame.token() == 101);
+        REQUIRE(frame.display_frame_token() == 201);
+        REQUIRE(frame.pid() == 4321);
+        REQUIRE(frame.layer_name() == "RFIRE");
+        saw_expected_surface = true;
+        break;
+      }
+      case perfetto::protos::FrameTimelineEvent::kActualSurfaceFrameStart: {
+        const auto& frame = event.actual_surface_frame_start();
+        REQUIRE(packet.timestamp() == 1100);
+        REQUIRE(frame.cookie() == 12);
+        REQUIRE(frame.token() == 102);
+        REQUIRE(frame.display_frame_token() == 202);
+        REQUIRE(frame.pid() == 4321);
+        REQUIRE(frame.present_type() ==
+                perfetto::protos::FrameTimelineEvent::PRESENT_LATE);
+        REQUIRE_FALSE(frame.on_time_finish());
+        REQUIRE(frame.gpu_composition());
+        REQUIRE(frame.jank_type() ==
+                perfetto::protos::FrameTimelineEvent::JANK_APP_DEADLINE_MISSED);
+        REQUIRE(frame.prediction_type() ==
+                perfetto::protos::FrameTimelineEvent::PREDICTION_VALID);
+        REQUIRE(frame.jank_severity_type() ==
+                perfetto::protos::FrameTimelineEvent::SEVERITY_FULL);
+        REQUIRE(frame.latched_fence_state() ==
+                perfetto::protos::FrameTimelineEvent::ActualSurfaceFrameStart::
+                    LATCHED_SIGNALED);
+        saw_actual_surface = true;
+        break;
+      }
+      case perfetto::protos::FrameTimelineEvent::kExpectedDisplayFrameStart: {
+        const auto& frame = event.expected_display_frame_start();
+        REQUIRE(packet.timestamp() == 1200);
+        REQUIRE(frame.cookie() == 21);
+        REQUIRE(frame.token() == 201);
+        REQUIRE(frame.pid() == 9999);
+        saw_expected_display = true;
+        break;
+      }
+      case perfetto::protos::FrameTimelineEvent::kActualDisplayFrameStart: {
+        const auto& frame = event.actual_display_frame_start();
+        REQUIRE(packet.timestamp() == 1300);
+        REQUIRE(frame.cookie() == 22);
+        REQUIRE(frame.token() == 202);
+        REQUIRE(frame.pid() == 9999);
+        REQUIRE(frame.present_type() ==
+                perfetto::protos::FrameTimelineEvent::PRESENT_ON_TIME);
+        REQUIRE(frame.on_time_finish());
+        REQUIRE_FALSE(frame.gpu_composition());
+        REQUIRE(frame.jank_type() ==
+                perfetto::protos::FrameTimelineEvent::JANK_NONE);
+        REQUIRE(frame.latched_unsignaled_count() == 2);
+        REQUIRE(frame.addressable_unsignaled_latch_count() == 1);
+        saw_actual_display = true;
+        break;
+      }
+      case perfetto::protos::FrameTimelineEvent::kFrameEnd:
+        end_cookies.insert(event.frame_end().cookie());
+        break;
+      case perfetto::protos::FrameTimelineEvent::EVENT_NOT_SET:
+        break;
+    }
+  }
 
-    REQUIRE(saw_expected_surface);
-    REQUIRE(saw_actual_surface);
-    REQUIRE(saw_expected_display);
-    REQUIRE(saw_actual_display);
-    REQUIRE(end_cookies == std::set<int64_t>{11, 12, 21, 22});
+  REQUIRE(saw_expected_surface);
+  REQUIRE(saw_actual_surface);
+  REQUIRE(saw_expected_display);
+  REQUIRE(saw_actual_display);
+  REQUIRE(end_cookies == std::set<int64_t>{11, 12, 21, 22});
 }
 
 TEST_CASE("Annotations", "[builder][annotations]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    auto thread = builder.add_thread("TestThread");
-    
-    SECTION("Pointer detection") {
-        auto event = builder.begin_slice(thread, "test", 1000);
-        event.add_annotation("pc", 0x1234)
-             .add_annotation("sp", 0x8000)
-             .add_annotation("address", 0x5678)
-             .add_annotation("data_pointer", 0xABCD)
-             .add_annotation("value", 42); // Should not be a pointer
-        
-        builder.end_slice(thread, 2000);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
-    
-    SECTION("Variadic annotations") {
-        auto event = builder.begin_slice(thread, "test", 1000);
-        event.add_annotations(
-            "key1", 123,
-            "key2", 45.67,
-            "key3", true,
-            "key4", "value"
-        );
-        
-        builder.end_slice(thread, 2000);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
-    
-    SECTION("Structured annotations") {
-        auto event = builder.begin_slice(thread, "test", 1000);
-        
-        event.annotation("registers")
-            .integer("A", 0x12)
-            .integer("B", 0x34)
-            .pointer("PC", 0x1234)
-            .pointer("SP", 0x8000);
-        
-        event.annotation("flags")
-            .boolean("zero", true)
-            .boolean("carry", false)
-            .boolean("interrupt", true);
-        
-        builder.end_slice(thread, 2000);
-        
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-    }
+  PerfettoTraceBuilder builder("TestProcess");
+  auto thread = builder.add_thread("TestThread");
+
+  SECTION("Pointer detection") {
+    auto event = builder.begin_slice(thread, "test", 1000);
+    event.add_annotation("pc", 0x1234)
+        .add_annotation("sp", 0x8000)
+        .add_annotation("address", 0x5678)
+        .add_annotation("data_pointer", 0xABCD)
+        .add_annotation("value", 42);  // Should not be a pointer
+
+    builder.end_slice(thread, 2000);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
+
+  SECTION("Variadic annotations") {
+    auto event = builder.begin_slice(thread, "test", 1000);
+    event.add_annotations("key1", 123, "key2", 45.67, "key3", true, "key4",
+                          "value");
+
+    builder.end_slice(thread, 2000);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
+
+  SECTION("Structured annotations") {
+    auto event = builder.begin_slice(thread, "test", 1000);
+
+    event.annotation("registers")
+        .integer("A", 0x12)
+        .integer("B", 0x34)
+        .pointer("PC", 0x1234)
+        .pointer("SP", 0x8000);
+
+    event.annotation("flags")
+        .boolean("zero", true)
+        .boolean("carry", false)
+        .boolean("interrupt", true);
+
+    builder.end_slice(thread, 2000);
+
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+  }
 }
 
 TEST_CASE("Serialization", "[builder][serialization]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    auto thread = builder.add_thread("TestThread");
-    
-    // Add some events
-    builder.begin_slice(thread, "test", 1000);
-    builder.add_instant_event(thread, "event", 1500);
-    builder.end_slice(thread, 2000);
-    
-    SECTION("Serialize to vector") {
-        auto data = builder.serialize();
-        REQUIRE(!data.empty());
-        
-        // Verify it's valid protobuf
-        perfetto::protos::Trace trace;
-        REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
-        REQUIRE(trace.packet_size() > 0);
-    }
-    
-    SECTION("Save to file") {
-        std::filesystem::path temp_file = "test_trace.perfetto-trace";
-        
-        builder.save(temp_file);
-        REQUIRE(std::filesystem::exists(temp_file));
-        
-        // Verify file content
-        std::ifstream file(temp_file, std::ios::binary);
-        std::vector<char> file_data((std::istreambuf_iterator<char>(file)),
-                                     std::istreambuf_iterator<char>());
-        
-        perfetto::protos::Trace trace;
-        REQUIRE(trace.ParseFromArray(file_data.data(), static_cast<int>(file_data.size())));
-        REQUIRE(trace.packet_size() > 0);
-        
-        // Cleanup
-        std::filesystem::remove(temp_file);
-    }
+  PerfettoTraceBuilder builder("TestProcess");
+  auto thread = builder.add_thread("TestThread");
+
+  // Add some events
+  builder.begin_slice(thread, "test", 1000);
+  builder.add_instant_event(thread, "event", 1500);
+  builder.end_slice(thread, 2000);
+
+  SECTION("Serialize to vector") {
+    auto data = builder.serialize();
+    REQUIRE(!data.empty());
+
+    // Verify it's valid protobuf
+    perfetto::protos::Trace trace;
+    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+    REQUIRE(trace.packet_size() > 0);
+  }
+
+  SECTION("Save to file") {
+    std::filesystem::path temp_file = "test_trace.perfetto-trace";
+
+    builder.save(temp_file);
+    REQUIRE(std::filesystem::exists(temp_file));
+
+    // Verify file content
+    std::ifstream file(temp_file, std::ios::binary);
+    std::vector<char> file_data((std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+
+    perfetto::protos::Trace trace;
+    REQUIRE(trace.ParseFromArray(file_data.data(),
+                                 static_cast<int>(file_data.size())));
+    REQUIRE(trace.packet_size() > 0);
+
+    // Cleanup
+    std::filesystem::remove(temp_file);
+  }
 }
 
 TEST_CASE("Interned encoding uses IID-backed strings", "[builder][interning]") {
-    PerfettoTraceBuilder builder("TestProcess", 1234);
-    const auto thread = builder.add_thread("TestThread");
+  PerfettoTraceBuilder builder("TestProcess", 1234);
+  const auto thread = builder.add_thread("TestThread");
 
-    // Repeated names/strings should be interned and reused.
-    builder.begin_slice(thread, "repeat_name", 1000)
-            .add_annotation("kind", "repeat_value")
-            .add_annotation("kind", "repeat_value");
-    builder.end_slice(thread, 2000);
+  // Repeated names/strings should be interned and reused.
+  builder.begin_slice(thread, "repeat_name", 1000)
+      .add_annotation("kind", "repeat_value")
+      .add_annotation("kind", "repeat_value");
+  builder.end_slice(thread, 2000);
 
-    builder.add_instant_event(thread, "repeat_name", 3000)
-            .add_annotation("kind", "repeat_value");
+  builder.add_instant_event(thread, "repeat_name", 3000)
+      .add_annotation("kind", "repeat_value");
 
-    perfetto::protos::Trace trace;
-    const auto data = builder.serialize();
-    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  perfetto::protos::Trace trace;
+  const auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
 
-    bool saw_cleared_flag = false;
-    bool saw_needs_flag = false;
-    bool saw_event_name_intern = false;
-    bool saw_annotation_name_intern = false;
-    bool saw_annotation_string_intern = false;
-    bool saw_event_name_iid = false;
-    bool saw_annotation_name_iid = false;
-    bool saw_annotation_string_iid = false;
+  bool saw_cleared_flag = false;
+  bool saw_needs_flag = false;
+  bool saw_event_name_intern = false;
+  bool saw_annotation_name_intern = false;
+  bool saw_annotation_string_intern = false;
+  bool saw_event_name_iid = false;
+  bool saw_annotation_name_iid = false;
+  bool saw_annotation_string_iid = false;
 
-    for (const auto& packet : trace.packet()) {
-        const auto flags = packet.sequence_flags();
-        if ((flags & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
-            saw_cleared_flag = true;
-        }
-        if ((flags & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0) {
-            saw_needs_flag = true;
-        }
-
-        if (packet.has_interned_data()) {
-            for (const auto& name : packet.interned_data().event_names()) {
-                if (name.name() == "repeat_name") {
-                    saw_event_name_intern = true;
-                }
-            }
-            for (const auto& name : packet.interned_data().debug_annotation_names()) {
-                if (name.name() == "kind") {
-                    saw_annotation_name_intern = true;
-                }
-            }
-            for (const auto& value : packet.interned_data().debug_annotation_string_values()) {
-                if (value.str() == "repeat_value") {
-                    saw_annotation_string_intern = true;
-                }
-            }
-        }
-
-        if (!packet.has_track_event()) {
-            continue;
-        }
-        const auto& event = packet.track_event();
-        if (event.name_field_case() == perfetto::protos::TrackEvent::kNameIid) {
-            saw_event_name_iid = true;
-        }
-        for (const auto& ann : event.debug_annotations()) {
-            if (ann.name_field_case() == perfetto::protos::DebugAnnotation::kNameIid) {
-                saw_annotation_name_iid = true;
-            }
-            if (ann.value_case() ==
-                perfetto::protos::DebugAnnotation::kStringValueIid) {
-                saw_annotation_string_iid = true;
-            }
-        }
+  for (const auto& packet : trace.packet()) {
+    const auto flags = packet.sequence_flags();
+    if ((flags &
+         perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0) {
+      saw_cleared_flag = true;
+    }
+    if ((flags & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) !=
+        0) {
+      saw_needs_flag = true;
     }
 
-    REQUIRE(saw_cleared_flag);
-    REQUIRE(saw_needs_flag);
-    REQUIRE(saw_event_name_intern);
-    REQUIRE(saw_annotation_name_intern);
-    REQUIRE(saw_annotation_string_intern);
-    REQUIRE(saw_event_name_iid);
-    REQUIRE(saw_annotation_name_iid);
-    REQUIRE(saw_annotation_string_iid);
+    if (packet.has_interned_data()) {
+      for (const auto& name : packet.interned_data().event_names()) {
+        if (name.name() == "repeat_name") {
+          saw_event_name_intern = true;
+        }
+      }
+      for (const auto& name : packet.interned_data().debug_annotation_names()) {
+        if (name.name() == "kind") {
+          saw_annotation_name_intern = true;
+        }
+      }
+      for (const auto& value :
+           packet.interned_data().debug_annotation_string_values()) {
+        if (value.str() == "repeat_value") {
+          saw_annotation_string_intern = true;
+        }
+      }
+    }
+
+    if (!packet.has_track_event()) {
+      continue;
+    }
+    const auto& event = packet.track_event();
+    if (event.name_field_case() == perfetto::protos::TrackEvent::kNameIid) {
+      saw_event_name_iid = true;
+    }
+    for (const auto& ann : event.debug_annotations()) {
+      if (ann.name_field_case() ==
+          perfetto::protos::DebugAnnotation::kNameIid) {
+        saw_annotation_name_iid = true;
+      }
+      if (ann.value_case() ==
+          perfetto::protos::DebugAnnotation::kStringValueIid) {
+        saw_annotation_string_iid = true;
+      }
+    }
+  }
+
+  REQUIRE(saw_cleared_flag);
+  REQUIRE(saw_needs_flag);
+  REQUIRE(saw_event_name_intern);
+  REQUIRE(saw_annotation_name_intern);
+  REQUIRE(saw_annotation_string_intern);
+  REQUIRE(saw_event_name_iid);
+  REQUIRE(saw_annotation_name_iid);
+  REQUIRE(saw_annotation_string_iid);
 }
 
-TEST_CASE("Resolve interned trace rewrites IID fields to strings", "[builder][interning]") {
-    PerfettoTraceBuilder builder("TestProcess", 1234);
-    const auto thread = builder.add_thread("TestThread");
+TEST_CASE("Resolve interned trace rewrites IID fields to strings",
+          "[builder][interning]") {
+  PerfettoTraceBuilder builder("TestProcess", 1234);
+  const auto thread = builder.add_thread("TestThread");
 
-    builder.add_instant_event(thread, "resolve_me", 1000)
-            .add_annotation("key_name", "value_name");
+  builder.add_instant_event(thread, "resolve_me", 1000)
+      .add_annotation("key_name", "value_name");
 
-    perfetto::protos::Trace trace;
-    const auto data = builder.serialize();
-    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  perfetto::protos::Trace trace;
+  const auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
 
-    auto resolved = resolve_interned_trace(trace);
+  auto resolved = resolve_interned_trace(trace);
 
-    bool saw_resolved_event_name = false;
-    bool saw_resolved_annotation_name = false;
-    bool saw_resolved_annotation_value = false;
+  bool saw_resolved_event_name = false;
+  bool saw_resolved_annotation_name = false;
+  bool saw_resolved_annotation_value = false;
 
-    for (const auto& packet : resolved.packet()) {
-        if (!packet.has_track_event()) {
-            continue;
-        }
-        const auto& event = packet.track_event();
-        if (event.name_field_case() == perfetto::protos::TrackEvent::kName &&
-            event.name() == "resolve_me") {
-            saw_resolved_event_name = true;
-        }
-        for (const auto& ann : event.debug_annotations()) {
-            if (ann.name_field_case() == perfetto::protos::DebugAnnotation::kName &&
-                ann.name() == "key_name") {
-                saw_resolved_annotation_name = true;
-            }
-            if (ann.value_case() == perfetto::protos::DebugAnnotation::kStringValue &&
-                ann.string_value() == "value_name") {
-                saw_resolved_annotation_value = true;
-            }
-        }
+  for (const auto& packet : resolved.packet()) {
+    if (!packet.has_track_event()) {
+      continue;
     }
+    const auto& event = packet.track_event();
+    if (event.name_field_case() == perfetto::protos::TrackEvent::kName &&
+        event.name() == "resolve_me") {
+      saw_resolved_event_name = true;
+    }
+    for (const auto& ann : event.debug_annotations()) {
+      if (ann.name_field_case() == perfetto::protos::DebugAnnotation::kName &&
+          ann.name() == "key_name") {
+        saw_resolved_annotation_name = true;
+      }
+      if (ann.value_case() == perfetto::protos::DebugAnnotation::kStringValue &&
+          ann.string_value() == "value_name") {
+        saw_resolved_annotation_value = true;
+      }
+    }
+  }
 
-    REQUIRE(saw_resolved_event_name);
-    REQUIRE(saw_resolved_annotation_name);
-    REQUIRE(saw_resolved_annotation_value);
+  REQUIRE(saw_resolved_event_name);
+  REQUIRE(saw_resolved_annotation_name);
+  REQUIRE(saw_resolved_annotation_value);
 }
 
-TEST_CASE("Resolve interned trace ignores invalid packet sequence IDs", "[builder][interning]") {
-    perfetto::protos::Trace trace;
+TEST_CASE("Resolve interned trace ignores invalid packet sequence IDs",
+          "[builder][interning]") {
+  perfetto::protos::Trace trace;
 
-    {
-        auto* packet = trace.add_packet();
-        packet->set_sequence_flags(perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED |
-                                   perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
-        auto* entry = packet->mutable_interned_data()->add_event_names();
-        entry->set_iid(1);
-        entry->set_name("alpha");
-    }
-    {
-        auto* packet = trace.add_packet();
-        packet->set_sequence_flags(perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED |
-                                   perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
-        auto* entry = packet->mutable_interned_data()->add_event_names();
-        entry->set_iid(1);
-        entry->set_name("beta");
-    }
-    {
-        auto* packet = trace.add_packet();
-        packet->set_sequence_flags(perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
-        auto* event = packet->mutable_track_event();
-        event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
-        event->set_track_uuid(1);
-        event->set_name_iid(1);
-    }
+  {
+    auto* packet = trace.add_packet();
+    packet->set_sequence_flags(
+        perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED |
+        perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+    auto* entry = packet->mutable_interned_data()->add_event_names();
+    entry->set_iid(1);
+    entry->set_name("alpha");
+  }
+  {
+    auto* packet = trace.add_packet();
+    packet->set_sequence_flags(
+        perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED |
+        perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+    auto* entry = packet->mutable_interned_data()->add_event_names();
+    entry->set_iid(1);
+    entry->set_name("beta");
+  }
+  {
+    auto* packet = trace.add_packet();
+    packet->set_sequence_flags(
+        perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+    auto* event = packet->mutable_track_event();
+    event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
+    event->set_track_uuid(1);
+    event->set_name_iid(1);
+  }
 
-    resolve_interned_trace_inplace(trace);
+  resolve_interned_trace_inplace(trace);
 
-    const auto& event = trace.packet(2).track_event();
-    REQUIRE(event.name_field_case() == perfetto::protos::TrackEvent::kNameIid);
-    REQUIRE_FALSE(event.has_name());
+  const auto& event = trace.packet(2).track_event();
+  REQUIRE(event.name_field_case() == perfetto::protos::TrackEvent::kNameIid);
+  REQUIRE_FALSE(event.has_name());
 }
 
 TEST_CASE("Thread safety", "[builder][thread-safety]") {
-    PerfettoTraceBuilder builder("TestProcess");
-    
-    SECTION("Concurrent track creation") {
-        std::vector<uint64_t> thread_ids;
-        const int num_threads = 10;
-        
-        // Create threads concurrently (simplified test - not actually concurrent)
-        for (int i = 0; i < num_threads; ++i) {
-            thread_ids.push_back(builder.add_thread("Thread" + std::to_string(i)));
-        }
-        
-        // All IDs should be unique
-        std::set<uint64_t> unique_ids(thread_ids.begin(), thread_ids.end());
-        REQUIRE(unique_ids.size() == num_threads);
+  PerfettoTraceBuilder builder("TestProcess");
+
+  SECTION("Concurrent track creation") {
+    std::vector<uint64_t> thread_ids;
+    const int num_threads = 10;
+
+    // Create threads concurrently (simplified test - not actually concurrent)
+    for (int i = 0; i < num_threads; ++i) {
+      thread_ids.push_back(builder.add_thread("Thread" + std::to_string(i)));
     }
+
+    // All IDs should be unique
+    std::set<uint64_t> unique_ids(thread_ids.begin(), thread_ids.end());
+    REQUIRE(unique_ids.size() == num_threads);
+  }
 }
 
+// These TextProto literals are exact whitespace-sensitive snapshots.
+// clang-format off
 TEST_CASE("Textproto snapshot validation", "[builder][snapshot]") {
     SECTION("Empty trace") {
         PerfettoTraceBuilder builder("TestProcess", 1234);
@@ -1166,104 +1173,115 @@ packet {
 	    }
 	}
 
+// clang-format on
 TEST_CASE("Interned encoding", "[builder][interning]") {
-    PerfettoTraceBuilder builder("TestProcess", 1234);
-    auto thread = builder.add_thread("TestThread");
+  PerfettoTraceBuilder builder("TestProcess", 1234);
+  auto thread = builder.add_thread("TestThread");
 
-    auto event = builder.add_instant_event(thread, "test_event", 1500);
-    event.add_annotation("arg_string", "hello")
-         .add_annotation("arg_int", 42);
+  auto event = builder.add_instant_event(thread, "test_event", 1500);
+  event.add_annotation("arg_string", "hello").add_annotation("arg_int", 42);
 
-    builder.add_instant_event(thread, "test_event", 1600);
+  builder.add_instant_event(thread, "test_event", 1600);
 
-    perfetto::protos::Trace trace;
-    auto data = builder.serialize();
-    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
-    require_track_events_use_interned_strings(trace);
+  perfetto::protos::Trace trace;
+  auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  require_track_events_use_interned_strings(trace);
 
-    const auto& seq_start_packet = trace.packet(0);
-    REQUIRE((seq_start_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0);
+  const auto& seq_start_packet = trace.packet(0);
+  REQUIRE((seq_start_packet.sequence_flags() &
+           perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) != 0);
 
-    const auto& first_packet = trace.packet(2);
-    REQUIRE((first_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0);
-    REQUIRE((first_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) == 0);
+  const auto& first_packet = trace.packet(2);
+  REQUIRE((first_packet.sequence_flags() &
+           perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0);
+  REQUIRE((first_packet.sequence_flags() &
+           perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) == 0);
 
-    REQUIRE(first_packet.has_track_event());
-    REQUIRE(first_packet.track_event().has_name_iid());
-    REQUIRE(!first_packet.track_event().has_name());
+  REQUIRE(first_packet.has_track_event());
+  REQUIRE(first_packet.track_event().has_name_iid());
+  REQUIRE(!first_packet.track_event().has_name());
 
-    REQUIRE(first_packet.has_interned_data());
-    REQUIRE(first_packet.interned_data().event_names_size() == 1);
-    REQUIRE(first_packet.interned_data().event_names(0).name() == "test_event");
-    REQUIRE(first_packet.interned_data().event_names(0).iid() == first_packet.track_event().name_iid());
+  REQUIRE(first_packet.has_interned_data());
+  REQUIRE(first_packet.interned_data().event_names_size() == 1);
+  REQUIRE(first_packet.interned_data().event_names(0).name() == "test_event");
+  REQUIRE(first_packet.interned_data().event_names(0).iid() ==
+          first_packet.track_event().name_iid());
 
-    std::unordered_map<std::string, uint64_t> ann_name_iids;
-    for (const auto& entry : first_packet.interned_data().debug_annotation_names()) {
-        ann_name_iids[entry.name()] = entry.iid();
-    }
-    REQUIRE(ann_name_iids.size() == 2);
-    REQUIRE(ann_name_iids.count("arg_string") == 1);
-    REQUIRE(ann_name_iids.count("arg_int") == 1);
+  std::unordered_map<std::string, uint64_t> ann_name_iids;
+  for (const auto& entry :
+       first_packet.interned_data().debug_annotation_names()) {
+    ann_name_iids[entry.name()] = entry.iid();
+  }
+  REQUIRE(ann_name_iids.size() == 2);
+  REQUIRE(ann_name_iids.count("arg_string") == 1);
+  REQUIRE(ann_name_iids.count("arg_int") == 1);
 
-    std::unordered_map<uint64_t, const perfetto::protos::DebugAnnotation*> anns_by_iid;
-    for (const auto& ann : first_packet.track_event().debug_annotations()) {
-        REQUIRE(ann.has_name_iid());
-        anns_by_iid[ann.name_iid()] = &ann;
-    }
-    REQUIRE(anns_by_iid.count(ann_name_iids["arg_int"]) == 1);
-    REQUIRE(anns_by_iid.at(ann_name_iids["arg_int"])->int_value() == 42);
+  std::unordered_map<uint64_t, const perfetto::protos::DebugAnnotation*>
+      anns_by_iid;
+  for (const auto& ann : first_packet.track_event().debug_annotations()) {
+    REQUIRE(ann.has_name_iid());
+    anns_by_iid[ann.name_iid()] = &ann;
+  }
+  REQUIRE(anns_by_iid.count(ann_name_iids["arg_int"]) == 1);
+  REQUIRE(anns_by_iid.at(ann_name_iids["arg_int"])->int_value() == 42);
 
-    REQUIRE(anns_by_iid.count(ann_name_iids["arg_string"]) == 1);
-    const auto* str_ann = anns_by_iid.at(ann_name_iids["arg_string"]);
-    REQUIRE(str_ann->has_string_value_iid());
+  REQUIRE(anns_by_iid.count(ann_name_iids["arg_string"]) == 1);
+  const auto* str_ann = anns_by_iid.at(ann_name_iids["arg_string"]);
+  REQUIRE(str_ann->has_string_value_iid());
 
-    std::unordered_map<std::string, uint64_t> str_value_iids;
-    for (const auto& entry : first_packet.interned_data().debug_annotation_string_values()) {
-        str_value_iids[entry.str()] = entry.iid();
-    }
-    REQUIRE(str_value_iids.count("hello") == 1);
-    REQUIRE(str_value_iids["hello"] == str_ann->string_value_iid());
+  std::unordered_map<std::string, uint64_t> str_value_iids;
+  for (const auto& entry :
+       first_packet.interned_data().debug_annotation_string_values()) {
+    str_value_iids[entry.str()] = entry.iid();
+  }
+  REQUIRE(str_value_iids.count("hello") == 1);
+  REQUIRE(str_value_iids["hello"] == str_ann->string_value_iid());
 
-    const auto& second_packet = trace.packet(3);
-    REQUIRE((second_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0);
-    REQUIRE((second_packet.sequence_flags() & perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) == 0);
-    REQUIRE(second_packet.track_event().name_iid() == first_packet.track_event().name_iid());
-    REQUIRE(!second_packet.has_interned_data());
+  const auto& second_packet = trace.packet(3);
+  REQUIRE((second_packet.sequence_flags() &
+           perfetto::protos::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) != 0);
+  REQUIRE((second_packet.sequence_flags() &
+           perfetto::protos::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED) == 0);
+  REQUIRE(second_packet.track_event().name_iid() ==
+          first_packet.track_event().name_iid());
+  REQUIRE(!second_packet.has_interned_data());
 }
 
-TEST_CASE("Interned encoding covers nested annotations", "[builder][interning]") {
-    PerfettoTraceBuilder builder("TestProcess", 1234);
-    auto thread = builder.add_thread("TestThread");
+TEST_CASE("Interned encoding covers nested annotations",
+          "[builder][interning]") {
+  PerfettoTraceBuilder builder("TestProcess", 1234);
+  auto thread = builder.add_thread("TestThread");
 
-    auto event = builder.add_instant_event(thread, "nested_event", 1500);
-    event.annotation("root")
-        .string("label", "top")
-        .nested("child")
-        .string("name", "leaf")
-        .integer("count", 2);
+  auto event = builder.add_instant_event(thread, "nested_event", 1500);
+  event.annotation("root")
+      .string("label", "top")
+      .nested("child")
+      .string("name", "leaf")
+      .integer("count", 2);
 
-    perfetto::protos::Trace trace;
-    auto data = builder.serialize();
-    REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  perfetto::protos::Trace trace;
+  auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
 
-    require_track_events_use_interned_strings(trace);
+  require_track_events_use_interned_strings(trace);
 
-    const auto& packet = trace.packet(2);
-    REQUIRE(packet.has_track_event());
-    REQUIRE(packet.track_event().debug_annotations_size() == 1);
-    const auto& root = packet.track_event().debug_annotations(0);
-    REQUIRE(root.has_name_iid());
-    REQUIRE(root.dict_entries_size() == 2);
+  const auto& packet = trace.packet(2);
+  REQUIRE(packet.has_track_event());
+  REQUIRE(packet.track_event().debug_annotations_size() == 1);
+  const auto& root = packet.track_event().debug_annotations(0);
+  REQUIRE(root.has_name_iid());
+  REQUIRE(root.dict_entries_size() == 2);
 
-    const auto& label = root.dict_entries(0);
-    REQUIRE(label.has_name_iid());
-    REQUIRE(label.has_string_value_iid());
+  const auto& label = root.dict_entries(0);
+  REQUIRE(label.has_name_iid());
+  REQUIRE(label.has_string_value_iid());
 
-    const auto& child = root.dict_entries(1);
-    REQUIRE(child.has_name_iid());
-    REQUIRE(child.dict_entries_size() == 2);
-    REQUIRE(child.dict_entries(0).has_name_iid());
-    REQUIRE(child.dict_entries(0).has_string_value_iid());
-    REQUIRE(child.dict_entries(1).has_name_iid());
-    REQUIRE(child.dict_entries(1).int_value() == 2);
+  const auto& child = root.dict_entries(1);
+  REQUIRE(child.has_name_iid());
+  REQUIRE(child.dict_entries_size() == 2);
+  REQUIRE(child.dict_entries(0).has_name_iid());
+  REQUIRE(child.dict_entries(0).has_string_value_iid());
+  REQUIRE(child.dict_entries(1).has_name_iid());
+  REQUIRE(child.dict_entries(1).int_value() == 2);
 }
