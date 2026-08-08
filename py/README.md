@@ -49,8 +49,26 @@ from retrobus_perfetto import PerfettoTraceBuilder
 # Create a trace
 builder = PerfettoTraceBuilder("MyEmulator")
 # ... add events ...
-trace_data = builder.build()
+trace_data = builder.serialize()
 ```
+
+### Compact target captures
+
+```python
+from retrobus_perfetto import CompactSchema, convert_compact_trace
+
+schema = CompactSchema.load("producer-schema.json")
+summary = convert_compact_trace(
+    "capture.rbct",
+    schema,
+    "capture.perfetto-trace",
+)
+```
+
+`CompactTraceReader.iter_items()` validates and yields one bounded chunk at a
+time. `read_compact_trace()` collects a complete decoded model when host memory
+is not constrained. The same entry point recognizes legacy Redux `.rdxt`
+version 1, but still requires the exact external producer schema.
 
 ### Direct Proto Access
 
@@ -70,6 +88,9 @@ trace = perfetto_pb2.Trace()
 - `retrobus_perfetto/` - Main package source code
   - `builder.py` - Main trace builder class
   - `annotations.py` - Annotation helper classes
+  - `compact.py` - Streaming compact decoder and Perfetto reconstruction
+  - `compact_schema.py` - Producer schema validation and C-header generation
+  - `merge.py` - Collision-safe multi-source Perfetto merge
   - `proto/` - Generated protobuf files (created during build)
     - `perfetto_pb2.py` - Generated Perfetto protobuf definitions
 - `tests/` - Unit tests
