@@ -1,4 +1,4 @@
-"""Format, reconstruction, and legacy-compatibility tests for compact traces."""
+"""Format and reconstruction tests for compact traces."""
 
 from __future__ import annotations
 
@@ -160,21 +160,6 @@ def _rbct_image(schema: CompactSchema) -> bytes:
     return bytes(header + chunk)
 
 
-def _rdxt_image() -> bytes:
-    payload = bytes([1]) + _uleb(50) + _uleb(40) + _uleb(42)
-    payload += bytes([2]) + _uleb(10) + _uleb(_zigzag(-7))
-    chunk = bytearray(4096)
-    chunk[:4] = b"RTCK"
-    struct.pack_into("<IQHHII", chunk, 4, 0, 100, len(payload), 2, 3,
-                     zlib.crc32(payload) & 0xFFFF_FFFF)
-    chunk[32 : 32 + len(payload)] = payload
-    header = bytearray(96)
-    header[:8] = b"RDXTRC1\0"
-    struct.pack_into("<HHHHIIII", header, 8, 1, 96, 32, 1, 4096, 1000, 0, 0)
-    struct.pack_into("<QQQQQQQQ", header, 32, 3, 0, 2, 0, 3, 2, 0, 4096)
-    return bytes(header + chunk)
-
-
 def _event_rows(builder) -> list[tuple[int, int, str, tuple[tuple[str, object], ...]]]:
     trace = perfetto_pb2.Trace()
     trace.ParseFromString(builder.serialize())
@@ -288,26 +273,3 @@ def test_crc_corruption_is_rejected(tmp_path: Path, schema: CompactSchema) -> No
     path.write_bytes(image)
     with pytest.raises(CompactTraceError, match="CRC mismatch"):
         read_compact_trace(path, schema)
-
-
-def test_legacy_redux_v1_and_rbct_reconstruct_equivalent_events(
-    tmp_path: Path, schema: CompactSchema
-) -> None:
-    rbct = tmp_path / "trace.rbct"
-    rdxt = tmp_path / "trace.rdxt"
-    rbct.write_bytes(_rbct_image(schema))
-    rdxt.write_bytes(_rdxt_image())
-    rbct_rows = [
-        row for row in _event_rows(compact_trace_to_builder(read_compact_trace(rbct, schema)))
-        if row[2] in {"work", "fault"}
-    ]
-    rdxt_rows = [
-        row for row in _event_rows(compact_trace_to_builder(read_compact_trace(rdxt, schema)))
-        if row[2] in {"work", "fault"}
-    ]
-    assert [(kind, name, arguments) for _, kind, name, arguments in rbct_rows] == [
-        (kind, name, arguments) for _, kind, name, arguments in rdxt_rows
-    ]
-    rbct_relative = [timestamp - rbct_rows[0][0] for timestamp, *_ in rbct_rows]
-    rdxt_relative = [timestamp - rdxt_rows[0][0] for timestamp, *_ in rdxt_rows]
-    assert rbct_relative == rdxt_relative

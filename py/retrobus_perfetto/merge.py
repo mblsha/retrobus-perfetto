@@ -82,6 +82,26 @@ def merge_perfetto_traces(
                         descriptor.uuid = map_track(source, descriptor.uuid)
                     if descriptor.HasField("parent_uuid"):
                         descriptor.parent_uuid = map_track(source, descriptor.parent_uuid)
+                if packet.HasField("trace_packet_defaults"):
+                    packet_defaults = packet.trace_packet_defaults
+                    if packet_defaults.HasField("track_event_defaults"):
+                        event_defaults = packet_defaults.track_event_defaults
+                        if event_defaults.HasField("track_uuid"):
+                            event_defaults.track_uuid = map_track(
+                                source, event_defaults.track_uuid
+                            )
+                        for index, value in enumerate(
+                            event_defaults.extra_counter_track_uuids
+                        ):
+                            event_defaults.extra_counter_track_uuids[index] = map_track(
+                                source, value
+                            )
+                        for index, value in enumerate(
+                            event_defaults.extra_double_counter_track_uuids
+                        ):
+                            event_defaults.extra_double_counter_track_uuids[index] = (
+                                map_track(source, value)
+                            )
                 if packet.HasField("track_event"):
                     event = packet.track_event
                     if event.HasField("track_uuid"):

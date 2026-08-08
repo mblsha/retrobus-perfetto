@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert `.rbct` or legacy Redux `.rdxt` into native Perfetto."""
+"""Convert a producer-neutral `.rbct` image into native Perfetto."""
 
 from __future__ import annotations
 
