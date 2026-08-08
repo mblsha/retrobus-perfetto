@@ -202,6 +202,8 @@ def test_schema_hash_and_header_are_deterministic(schema: CompactSchema) -> None
     header = render_c_schema_header(schema, "demo")
     assert "DEMO_TRACE_EVENT_WORK UINT32_C(1)" in header
     assert "DEMO_TRACE_EVENT_ADDRESS UINT32_C(300)" in header
+    assert "DEMO_TRACE_EVENT_REQUEST_4 UINT32_C(4)" in header
+    assert "DEMO_TRACE_EVENT_REQUEST_5 UINT32_C(5)" in header
     assert ", ".join(f"0x{byte:02x}" for byte in schema.sha256) in header
 
 

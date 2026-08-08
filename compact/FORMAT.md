@@ -174,6 +174,11 @@ ID already carries a dispatch number or when an ABI value is fixed by the
 schema. Schemas are immutable: do not reuse an event ID or reorder its stored
 arguments. Make an intentional schema-version change instead.
 
+Generated target constants use the event or track name when it is unique. If
+multiple IDs intentionally share a display name, the generator appends the
+numeric ID to each colliding C macro; Perfetto continues to show the original
+shared name.
+
 ## Resource and safety contract
 
 - Initialization zeros and therefore prefaults the complete usable buffer.

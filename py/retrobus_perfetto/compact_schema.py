@@ -345,14 +345,22 @@ def render_c_schema_header(schema: CompactSchema, prefix: str | None = None) -> 
         f"#define {symbol}_TRACE_PRODUCER_ID UINT32_C({schema.producer_id})",
         f"#define {symbol}_TRACE_SCHEMA_VERSION UINT32_C({schema.version})",
     ]
-    for track in sorted(schema.tracks.values(), key=lambda item: item.id):
+    tracks = sorted(schema.tracks.values(), key=lambda item: item.id)
+    track_symbols = [_c_identifier(track.name) for track in tracks]
+    for track, track_symbol in zip(tracks, track_symbols):
+        if track_symbols.count(track_symbol) > 1:
+            track_symbol = f"{track_symbol}_{track.id}"
         lines.append(
-            f"#define {symbol}_TRACE_TRACK_{_c_identifier(track.name)} "
+            f"#define {symbol}_TRACE_TRACK_{track_symbol} "
             f"UINT32_C({track.id})"
         )
-    for event in sorted(schema.events.values(), key=lambda item: item.id):
+    events = sorted(schema.events.values(), key=lambda item: item.id)
+    event_symbols = [_c_identifier(event.name) for event in events]
+    for event, event_symbol in zip(events, event_symbols):
+        if event_symbols.count(event_symbol) > 1:
+            event_symbol = f"{event_symbol}_{event.id}"
         lines.append(
-            f"#define {symbol}_TRACE_EVENT_{_c_identifier(event.name)} "
+            f"#define {symbol}_TRACE_EVENT_{event_symbol} "
             f"UINT32_C({event.id})"
         )
     hash_bytes = ", ".join(f"0x{byte:02x}" for byte in schema.sha256)
