@@ -244,7 +244,9 @@ class PerfettoTraceBuilder:
 
         return track_uuid
 
-    def update_counter(self, track_uuid: int, value: float, timestamp: int) -> None:
+    def update_counter(
+        self, track_uuid: int, value: float, timestamp: int
+    ) -> TrackEventWrapper:
         """
         Update a counter value.
 
@@ -252,6 +254,9 @@ class PerfettoTraceBuilder:
             track_uuid: Counter track UUID
             value: New counter value
             timestamp: Timestamp in nanoseconds
+
+        Returns:
+            TrackEventWrapper for adding categories and annotations
         """
         event = self._add_track_event(
             track_uuid,
@@ -263,6 +268,9 @@ class PerfettoTraceBuilder:
             event.track_event.counter_value = value
         else:
             event.track_event.double_counter_value = value
+        return TrackEventWrapper(
+            event.track_event, packet=event, interning_state=self._interning_state
+        )
 
     def add_flow(self, track_uuid: int, name: str, timestamp: int,
                  flow_id: int, terminating: bool = False) -> TrackEventWrapper:

@@ -57,6 +57,18 @@
       ]
     },
     {
+      "id": 4,
+      "name": "load",
+      "category": "runtime",
+      "kind": "counter",
+      "arguments": [
+        {
+          "name": "value",
+          "type": "float64"
+        }
+      ]
+    },
+    {
       "id": 300,
       "name": "address",
       "category": "runtime",

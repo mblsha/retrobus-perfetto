@@ -49,14 +49,16 @@ protobuf. The producer keeps its event schema; this repository supplies the
 format, target writer, validation, conversion, and collision-safe trace merge.
 
 ```sh
-python tools/compact_schema_header.py producer-schema.json generated/schema.h
+python tools/compact_schema_header.py producer-schema.json generated/schema.h \
+    --prefix example
 python tools/compact_trace_to_perfetto.py capture.rbct capture.perfetto-trace \
   --schema producer-schema.json
 python tools/merge_perfetto_sources.py capture.perfetto-trace kernel.perfetto-trace \
   --output combined.perfetto-trace
 ```
 
-The normal record remains event ID, timestamp delta, optional duration, and
+The generated header provides schema-safe inline begin/emit functions; the
+normal record remains event ID, timestamp delta, optional duration, and
 schema-defined numeric arguments. Names and protobuf expansion happen only on
 the host. See [`compact/FORMAT.md`](compact/FORMAT.md) for the compatibility
 contract and [`compact/README.md`](compact/README.md) for the C/C++ API.

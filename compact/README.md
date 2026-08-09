@@ -7,7 +7,8 @@ has no protobuf or operating-system dependency.
 Use the Python schema tool once per producer:
 
 ```sh
-python tools/compact_schema_header.py producer-schema.json generated/trace_schema.h
+python tools/compact_schema_header.py producer-schema.json generated/trace_schema.h \
+    --prefix example
 ```
 
 Initialize a buffer before entering the measured workload:
@@ -37,19 +38,54 @@ static void start_trace(void) {
 The caller supplies timestamps, normally one mapped hardware-counter load:
 
 ```c
-rbct_writer_begin(&trace_writer, read_ticks(), 0, EXAMPLE_TRACE_EVENT_WORK,
-                  NULL, 0);
+EXAMPLE_TRACE_BEGIN_WORK(&trace_writer, read_ticks(),
+                         EXAMPLE_TRACE_TRACK_MAIN, 42);
 do_work();
 rbct_writer_end(&trace_writer, read_ticks());
 ```
 
-Call `rbct_writer_clock_sync()` at capture boundaries, not for every event.
+The generated `..._TRACE_BEGIN_...` and `..._TRACE_EMIT_...` functions bind each
+event to its schema-defined record shape and argument encodings; prefer them to
+the generic writer calls. For `fixed64` and `float64`, pass the exact 64-bit wire
+bits.
+
+Call `rbct_writer_clock_sync()` at capture boundaries, before the first data
+record in that clock generation, not for every event.
+Its reference timestamp must use Perfetto's BOOTTIME clock domain.
+Within one clock generation, serialized observations and completed scopes must
+be separated by less than half the hardware-counter range. End all open scopes
+before changing clock generation, and advance the generation by one modulo
+`2^32` for each change.
+`rbct_writer_end()` retains the open scope when validation fails so the caller
+can retry; `rbct_writer_cancel()` explicitly discards the innermost scope.
 After the measurement, call `rbct_writer_finalize()` and export exactly
 `rbct_writer_size()` bytes beginning at `rbct_writer_data()`. Buffer allocation,
 locking, persistence, and transport deliberately remain producer policy.
+The buffer size must equal `RBCT_FILE_HEADER_BYTES` plus an integral number of
+`RBCT_CHUNK_BYTES`; initialization rejects trailing partial chunks. The writer,
+buffer, scope storage, and configuration must not overlap.
+
+New captures use framed format v2. Each record body is copied before its
+length/complement publication marker, so best-effort crash recovery does not
+mistake zero-filled slack for event ID zero. ARMv7+, AArch64, RISC-V, and x86
+receive a built-in store-publication barrier. Other targets, including ARMv5,
+must define `RBCT_PLATFORM_PUBLISH_BARRIER()` when a snapshot can race the
+writer, or quiesce and synchronize the writer before copying. Platforms whose
+snapshot is not coherent with ordinary stores must also supply the appropriate
+persistence or cache-flush policy.
+
+Chunk reuse invalidates the leading magic byte before changing any retained
+contents, then publishes that byte last after the replacement header is ready.
+The ring-wrapped flag is set as soon as live overwrite begins. Finalization
+similarly publishes the header CRC before setting the finalized bit, so crash
+recovery never observes that bit as an early commit marker.
 
 For C++17 and newer, `retrobus/compact_trace.hpp` adds a non-owning `Writer`
 and `TraceScope`. A null or disabled writer does not read the supplied clock.
+`TraceScope::cancel()` explicitly abandons an active scope. If an end timestamp
+is invalid during destruction, the wrapper cancels the retained C scope so RAII
+cannot leave the writer permanently unfinalizable; `Writer::status()` preserves
+the failed end status.
 
 ## Build
 
@@ -59,6 +95,16 @@ cmake --build build/compact
 ctest --test-dir build/compact --output-on-failure
 ```
 
-The C implementation is C99 and has no unresolved libc symbols when compiled
-normally. Its event path is single-producer; use separate writers for
+Pure C consumers can avoid requiring a C++ compiler:
+
+```sh
+cmake -S compact -B build/compact-c -DRBCT_BUILD_CPP=OFF
+cmake --build build/compact-c
+```
+
+The C implementation is C99. Its CMake target applies freestanding, no-builtin,
+and no-stack-protector options on GCC and Clang, and omits security-cookie and
+default-runtime-library directives under MSVC, so the resulting target library
+has no implicit runtime dependency. Equivalent flags are required when compiling
+the source directly. Its event path is single-producer; use separate writers for
 concurrent producers and merge reconstructed traces on the host.

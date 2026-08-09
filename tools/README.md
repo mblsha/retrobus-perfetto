@@ -6,11 +6,16 @@ This directory contains reusable Python scripts for analyzing Perfetto traces, p
 
 ### Compact trace tools
 
-Generate target constants from an immutable producer schema:
+Generate target constants and schema-safe inline emitters from an immutable
+producer schema:
 
 ```sh
-python tools/compact_schema_header.py schema.json generated_schema.h
+python tools/compact_schema_header.py schema.json generated_schema.h --prefix example
 ```
+
+Without `--prefix`, generated symbols combine the normalized producer name,
+producer ID, and schema version so headers from different producers or schema
+versions can be included together.
 
 Validate and reconstruct a producer-neutral `.rbct` image:
 
@@ -28,9 +33,9 @@ python tools/merge_perfetto_sources.py user.perfetto-trace kernel.perfetto-trace
 ```
 
 Compact conversion requires the exact schema named by the file's producer ID,
-version, and SHA-256. The decoder validates header and chunk CRCs, record
-layouts, counter widths, generations, counts, and ring sequences before it
-publishes output.
+version, and SHA-256. The decoder validates file, chunk-header, and payload
+CRCs, canonical integer encodings, record layouts, counter widths, generations,
+counts, and ring sequences before it publishes output.
 
 ### 1. perfetto_pc_analyzer.py
 
