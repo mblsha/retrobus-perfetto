@@ -63,8 +63,8 @@ int main(void) {
   config.clock_width_bits = 32u;
   watched_buffer = buffer;
   watched_writer = &writer;
-  if (rbct_writer_init(&writer, buffer, sizeof(storage.bytes), NULL, 0u, &config) !=
-      RBCT_OK) {
+  if (rbct_writer_init(&writer, buffer, sizeof(storage.bytes), NULL, 0u,
+                       &config) != RBCT_OK) {
     return 1;
   }
   if (rbct_writer_emit(&writer, 0u, 0u, 300u, NULL, 0u) != RBCT_OK) {
