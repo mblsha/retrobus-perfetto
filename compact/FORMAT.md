@@ -48,7 +48,8 @@ skips incomplete chunk headers, ignores count fields that may lag frame commits,
 and retains only the completely published record prefix. Total overwrite/drop
 accounting is unavailable and is conservatively reported as the retained
 records only. The target writer invokes `RBCT_PLATFORM_PUBLISH_BARRIER()` before
-and after each publishing marker. Built-in hardware store barriers cover
+each commit marker, and after an invalidation marker when later writes must not
+pass it. Built-in hardware store barriers cover
 ARMv7+, AArch64, and RISC-V; x86 uses its store-ordering guarantee plus a
 compiler barrier under GCC, Clang, and MSVC. MSVC ARM builds use a hardware
 barrier. Other targets, including ARMv5, default to compiler ordering and must
@@ -116,7 +117,8 @@ two sides must not be extended as one continuous clock.
 | 44 | 4 | chunk-header CRC32, or zero when file-header flag bit 2 is clear |
 
 The payload occupies the rest of the 4096-byte chunk. A new chunk resets the
-current timestamp to its base and the current track to its default.
+current timestamp to its base and the current track to its default. A clock-sync
+record advances the current timestamp to its counter-interval midpoint.
 Live writers invalidate the first magic byte before reusing a chunk, populate
 the stable header fields and `BCK` suffix, then publish the leading `R` last as
 the chunk commit marker. A crash reader ignores chunks whose magic was not
@@ -132,15 +134,35 @@ non-canonical without narrowing version 1 compatibility.
 Each version 2 logical record has this transactional envelope:
 
 ```text
-uint16 record bytes
-uint16 bitwise complement of record bytes
+uint8 publication marker
 record bytes
 ```
 
-The length must be nonzero and XOR with its complement to `0xffff`. The writer
-copies the body and complement before publishing the length. A reader stops an
-unfinalized scan at the first zero, torn, oversized, truncated, malformed, or
-non-canonical frame and never interprets zero-filled slack as event data.
+Every ordinary record body is at most 70 bytes. Marker values encode its length
+and the two most common event timestamp deltas. The remaining marker space
+inlines the smallest events:
+
+| Marker | Body bytes | Event ID | Timestamp delta |
+| ---: | ---: | ---: | ---: |
+| `1..70` | marker | in body | explicit ULEB128 in the body |
+| `71..140` | marker − 70 | in body | implicit `0` |
+| `141..210` | marker − 140 | in body | implicit `1` |
+| `211..232` | `0` | marker − 211 | implicit `0` |
+| `233..254` | `0` | marker − 233 | implicit `1` |
+| `255` | — | — | invalid |
+
+The 70-byte bound is exact: track and event controls with maximum `uint32` IDs
+use 12 bytes, the half-range-bounded timestamp delta and duration use at most 18,
+and four maximum `uint64` ULEB128 arguments use 40.
+
+The inline forms are valid only for event IDs `0..21` on the current track
+with no duration or stored arguments; the publication marker is the entire
+record. Clock-sync frames use only the explicit `1..70` range. The writer copies
+the body before publishing the one-byte marker; supported targets publish byte
+stores atomically. A reader stops an unfinalized scan at the first zero, invalid,
+oversized, truncated, malformed, or non-canonical frame and never interprets
+zero-filled slack as event data. New writers use an implicit marker for event
+deltas zero and one; an explicit encoding of either value is non-canonical.
 Finalized readers require every byte through the chunk's `used` cursor to be a
 complete frame.
 
@@ -214,6 +236,12 @@ generation advances by one modulo `2^32`, starts a new chunk and correlation
 segment, and is invalid while a completed-slice scope remains open. Its first
 logical record must be the synchronization record that establishes the new
 generation.
+
+The target writer enforces bounded counter samples, intervals, and generation
+ordering needed for unambiguous serialization. Exact rational clock
+correlation, including cross-generation mapped-time monotonicity, is validated
+on the host so the freestanding recorder does not need multiword arithmetic
+state or code.
 
 In version 2, within one generation, the producer must ensure that the actual time between
 consecutive serialized observations, every completed-slice duration, and every

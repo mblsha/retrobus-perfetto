@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
   if (rbct_writer_clock_sync(&writer, 7u, 0u, 2u, 1000u, 0u) != RBCT_OK) {
     return 4;
   }
-  for (index = 1; index <= 500u; ++index) {
+  for (index = 1; index <= 672u; ++index) {
     if (INTEROP_TRACE_EMIT_ADDRESS(&writer, index, 0u, 0u) != RBCT_OK) {
       return 5;
     }

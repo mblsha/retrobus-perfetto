@@ -77,14 +77,26 @@ jobs:
         if: matrix.compiler == 'clang' && matrix.build_type == 'Release'
         run: |
           clang --target=armv5te-none-eabi -march=armv5te -mfloat-abi=soft \
-            -std=c99 -Os -ffreestanding -fno-stack-protector \
+            -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
+            -fstack-usage \
             -Wall -Wextra -Werror -Icompact/include \
             -c compact/src/compact_trace.c -o build/compact/compact_trace_armv5te.o
           undefined="$(readelf -Ws build/compact/compact_trace_armv5te.o | \
             awk '$7 == "UND" && $8 != "" {print $8}')"
           test -z "$undefined"
+          text_bytes="$(size build/compact/compact_trace_armv5te.o | \
+            awk 'NR == 2 {print $1}')"
+          test "$text_bytes" -le 7000
+          max_stack="$(awk '{print $2}' \
+            build/compact/compact_trace_armv5te.su | sort -nr | head -1)"
+          test "$max_stack" -le 192
+          clang --target=armv5te-none-eabi -march=armv5te -mfloat-abi=soft \
+            -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
+            -Wall -Wextra -Werror -Icompact/include \
+            -c compact/tests/test_compact_trace_resources.c \
+            -o build/compact/test_compact_trace_resources_armv5te.o
           clang --target=armv7a-none-eabi -march=armv7-a -mfloat-abi=soft \
-            -std=c99 -Os -ffreestanding -fno-stack-protector \
+            -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
             -Wall -Wextra -Werror -Icompact/include \
             -S compact/src/compact_trace.c -o build/compact/compact_trace_armv7a.s
           grep -Eq '\bdmb\b' build/compact/compact_trace_armv7a.s

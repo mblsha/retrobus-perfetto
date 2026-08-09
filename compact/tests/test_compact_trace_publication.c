@@ -7,6 +7,7 @@ static uint8_t* watched_buffer;
 static rbct_writer_t* watched_writer;
 static int saw_invalidated_reused_chunk;
 static int saw_prepared_unpublished_chunk;
+static int saw_record_body_before_marker;
 static int saw_finalized_without_crc;
 static int saw_chunk_crc_flag_before_chunk_crc;
 
@@ -27,11 +28,18 @@ static void test_publish_barrier(void) {
   if (chunk[0] == 0u && chunk[1] == RBCT_CHUNK_MAGIC_1 &&
       chunk[2] == RBCT_CHUNK_MAGIC_2 && chunk[3] == RBCT_CHUNK_MAGIC_3) {
     if (watched_writer != NULL &&
-        watched_writer->current_chunk != RBCT_NO_CHUNK &&
-        chunk[4] == 0u) {
+        watched_writer->current_chunk != RBCT_NO_CHUNK && chunk[4] == 0u) {
       saw_invalidated_reused_chunk = 1;
     } else if (chunk[4] != 0u) {
       saw_prepared_unpublished_chunk = 1;
+    }
+  }
+  if (chunk[0] == RBCT_CHUNK_MAGIC_0) {
+    const uint16_t used = rbct_get_u16(chunk, 28u);
+    const uint8_t* frame = chunk + RBCT_CHUNK_HEADER_BYTES + used;
+    if (used + 1u < RBCT_CHUNK_BYTES - RBCT_CHUNK_HEADER_BYTES &&
+        frame[0] == 0u && frame[1] != 0u) {
+      saw_record_body_before_marker = 1;
     }
   }
 }
@@ -51,7 +59,10 @@ int main(void) {
       RBCT_OK) {
     return 1;
   }
-  for (index = 0u; index < 2000u && !saw_invalidated_reused_chunk; ++index) {
+  if (rbct_writer_emit(&writer, 0u, 0u, 300u, NULL, 0u) != RBCT_OK) {
+    return 10;
+  }
+  for (index = 1u; index < 5000u && !saw_invalidated_reused_chunk; ++index) {
     if (rbct_writer_emit(&writer, index, 0u, 1u, NULL, 0u) != RBCT_OK) {
       return 2;
     }
@@ -61,6 +72,9 @@ int main(void) {
   }
   if (!saw_prepared_unpublished_chunk) {
     return 4;
+  }
+  if (!saw_record_body_before_marker) {
+    return 9;
   }
   if ((rbct_get_u16(buffer, 38u) & RBCT_FLAG_RING_WRAPPED) == 0u) {
     return 5;

@@ -43,9 +43,7 @@ def _schema_mapping() -> dict[str, object]:
                 "category": "runtime",
                 "kind": "slice",
                 "id_argument": "entry",
-                "constant_arguments": [
-                    {"name": "abi", "type": "uint", "value": 5}
-                ],
+                "constant_arguments": [{"name": "abi", "type": "uint", "value": 5}],
                 "arguments": [{"name": "amount", "type": "uint"}],
             },
             {
@@ -131,14 +129,13 @@ def _zigzag(value: int) -> int:
 
 
 def _frame(record: bytes) -> bytes:
-    return struct.pack("<HH", len(record), (~len(record)) & 0xFFFF) + record
+    assert 0 < len(record) <= 0xFF
+    return bytes([len(record)]) + record
 
 
 def _refresh_header_checksums(image: bytearray) -> None:
     struct.pack_into("<I", image, 160 + 44, 0)
-    struct.pack_into(
-        "<I", image, 160 + 44, zlib.crc32(image[160:208]) & 0xFFFF_FFFF
-    )
+    struct.pack_into("<I", image, 160 + 44, zlib.crc32(image[160:208]) & 0xFFFF_FFFF)
     struct.pack_into("<I", image, 152, 0)
     struct.pack_into("<I", image, 152, zlib.crc32(image[:160]) & 0xFFFF_FFFF)
 
@@ -151,7 +148,7 @@ def _rbct_image(schema: CompactSchema, *, version: int = 2) -> bytes:
         + _uleb(102)
         + _uleb(1_000_000)
         + _uleb(300),
-        bytes([1]) + _uleb(50) + _uleb(40) + _uleb(42),
+        bytes([1]) + _uleb(49) + _uleb(40) + _uleb(42),
         bytes([2]) + _uleb(10) + _uleb(_zigzag(-7)),
         bytes([0xFE]) + _uleb(1) + bytes([3]) + _uleb(10) + _uleb(99),
         bytes([0xFE]) + _uleb(0) + bytes([4]) + _uleb(10) + _uleb(123),
@@ -171,20 +168,45 @@ def _rbct_image(schema: CompactSchema, *, version: int = 2) -> bytes:
 
     chunk = bytearray(4096)
     chunk[:4] = b"RBCK"
-    struct.pack_into("<QQIIHHIHHI", chunk, 4, 0, 100, 7, 0,
-                     len(payload), 8, 9, 1, 0, zlib.crc32(payload) & 0xFFFF_FFFF)
+    struct.pack_into(
+        "<QQIIHHIHHI",
+        chunk,
+        4,
+        0,
+        100,
+        7,
+        0,
+        len(payload),
+        8,
+        9,
+        1,
+        0,
+        zlib.crc32(payload) & 0xFFFF_FFFF,
+    )
     chunk[48 : 48 + len(payload)] = payload
     if version == 2:
         struct.pack_into("<I", chunk, 44, 0)
-        struct.pack_into(
-            "<I", chunk, 44, zlib.crc32(chunk[:48]) & 0xFFFF_FFFF
-        )
+        struct.pack_into("<I", chunk, 44, zlib.crc32(chunk[:48]) & 0xFFFF_FFFF)
 
     header = bytearray(160)
     header[:8] = b"RBCTRC2\0" if version == 2 else b"RBCTRC1\0"
     flags = 5 if version == 2 else 1
-    struct.pack_into("<HHHHIQQHHII", header, 8, version, 160, 48, 0, 4096,
-                     1_000_000, 1, 32, flags, schema.producer_id, schema.version)
+    struct.pack_into(
+        "<HHHHIQQHHII",
+        header,
+        8,
+        version,
+        160,
+        48,
+        0,
+        4096,
+        1_000_000,
+        1,
+        32,
+        flags,
+        schema.producer_id,
+        schema.version,
+    )
     header[48:80] = schema.sha256
     header[80:96] = bytes(range(16))
     struct.pack_into("<QQQQQQII", header, 96, 8, 0, 0, 9, 0, 4256, 7, 0)
@@ -330,8 +352,7 @@ def test_read_and_reconstruct_all_generic_event_kinds(
     parsed.ParseFromString(builder.serialize())
     typed_annotations = {
         event.name: [
-            annotation.WhichOneof("value")
-            for annotation in event.debug_annotations
+            annotation.WhichOneof("value") for annotation in event.debug_annotations
         ]
         for packet in parsed.packet
         if packet.HasField("track_event")
@@ -609,6 +630,59 @@ def test_v2_unfinalized_recovery_does_not_invent_event_zero(
     assert all(record.event.id != 0 for record in trace.records)
 
 
+def test_v2_unfinalized_recovery_stops_at_unpublished_marker(
+    tmp_path: Path, schema: CompactSchema
+) -> None:
+    image = bytearray(_rbct_image(schema))
+    struct.pack_into("<H", image, 38, 0)
+    struct.pack_into("<I", image, 152, 0)
+    struct.pack_into("<I", image, 160 + 44, 0)
+    image[160 + 48] = 0
+    path = tmp_path / "unpublished-record.rbct"
+    path.write_bytes(image)
+
+    trace = read_compact_trace(path, schema, allow_unfinalized=True)
+
+    assert trace.records == ()
+    assert trace.clock_syncs == ()
+
+
+def test_v2_reserved_frame_marker_is_rejected(
+    tmp_path: Path, schema: CompactSchema
+) -> None:
+    image = bytearray(_rbct_image(schema))
+    image[160 + 48] = 0xFF
+    used = struct.unpack_from("<H", image, 160 + 28)[0]
+    payload = image[160 + 48 : 160 + 48 + used]
+    struct.pack_into("<I", image, 160 + 40, zlib.crc32(payload) & 0xFFFF_FFFF)
+    _refresh_header_checksums(image)
+    path = tmp_path / "reserved-frame-marker.rbct"
+    path.write_bytes(image)
+
+    for recover in (False, True):
+        with pytest.raises(CompactTraceError, match="invalid record frame"):
+            read_compact_trace(path, schema, allow_unfinalized=recover)
+
+
+def test_v2_explicit_small_delta_is_noncanonical(schema: CompactSchema) -> None:
+    chunk = compact_module._Chunk(0, 0, 100, 7, 0, 0, 0, 0, 0, 0)
+    record = bytes([2, 1]) + _uleb(_zigzag(-7))
+
+    with pytest.raises(CompactTraceError, match="explicit timestamp delta"):
+        compact_module._decode_one_record(
+            record,
+            0,
+            len(record),
+            chunk=chunk,
+            schema=schema,
+            clock_width_bits=32,
+            timestamp=100,
+            track_id=0,
+            order=0,
+            strict=True,
+        )
+
+
 def test_recovery_option_never_weakens_finalized_validation(
     tmp_path: Path, schema: CompactSchema
 ) -> None:
@@ -690,9 +764,7 @@ def test_finalized_used_chunk_payload_slack_must_be_zero(
     image = bytearray(_rbct_image(schema))
     used = struct.unpack_from("<H", image, compact_module.FILE_HEADER_BYTES + 28)[0]
     image[
-        compact_module.FILE_HEADER_BYTES
-        + compact_module.CHUNK_HEADER_BYTES
-        + used
+        compact_module.FILE_HEADER_BYTES + compact_module.CHUNK_HEADER_BYTES + used
     ] = 0xA5
     path = tmp_path / "dirty-payload-slack.rbct"
     path.write_bytes(image)
@@ -745,9 +817,7 @@ def test_unanchored_slice_origin_includes_its_start(schema: CompactSchema) -> No
         7,
         0,
     )
-    record = compact_module.CompactRecord(
-        schema.events[1], 7, 0, 100, 40, (1,), 0, 100
-    )
+    record = compact_module.CompactRecord(schema.events[1], 7, 0, 100, 40, (1,), 0, 100)
     trace = compact_module.CompactTrace(header, schema, (record,), ())
 
     assert trace.timestamp_ns(7, 60) == 0
@@ -852,9 +922,7 @@ def test_async_ring_loss_is_rendered_as_a_truncated_instant(
     parsed = perfetto_pb2.Trace()
     parsed.ParseFromString(compact_trace_to_builder(trace).serialize())
     events = [
-        packet.track_event
-        for packet in parsed.packet
-        if packet.HasField("track_event")
+        packet.track_event for packet in parsed.packet if packet.HasField("track_event")
     ]
 
     assert [event.type for event in events] == [perfetto_pb2.TrackEvent.TYPE_INSTANT]
@@ -886,9 +954,7 @@ def test_unmatched_async_begin_closes_at_the_last_retained_time(
     record = compact_module.CompactRecord(
         schema.events[6], 7, 0, 0, None, (55, 1), 0, 0
     )
-    anchor = compact_module.CompactClockSync(
-        7, 100, 100, 0, 0, 1, 100, synthetic=True
-    )
+    anchor = compact_module.CompactClockSync(7, 100, 100, 0, 0, 1, 100, synthetic=True)
     trace = compact_module.CompactTrace(header, schema, (record,), (anchor,))
     parsed = perfetto_pb2.Trace()
     parsed.ParseFromString(
@@ -983,11 +1049,7 @@ def test_identical_nested_slices_preserve_stack_order(
     trace = compact_module.CompactTrace(header, schema, records, ())
 
     rows = _event_rows(compact_trace_to_builder(trace))
-    begins = [
-        row
-        for row in rows
-        if row[1] == perfetto_pb2.TrackEvent.TYPE_SLICE_BEGIN
-    ]
+    begins = [row for row in rows if row[1] == perfetto_pb2.TrackEvent.TYPE_SLICE_BEGIN]
 
     assert [row[1] for row in rows] == [
         perfetto_pb2.TrackEvent.TYPE_SLICE_BEGIN,
@@ -1021,15 +1083,9 @@ def test_slice_end_preserves_same_tick_record_order(
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[2], 7, 0, 200, None, (-1,), 0, 200
-        ),
-        compact_module.CompactRecord(
-            schema.events[1], 7, 0, 200, 100, (1,), 1, 200
-        ),
-        compact_module.CompactRecord(
-            schema.events[2], 7, 0, 200, None, (-2,), 2, 200
-        ),
+        compact_module.CompactRecord(schema.events[2], 7, 0, 200, None, (-1,), 0, 200),
+        compact_module.CompactRecord(schema.events[1], 7, 0, 200, 100, (1,), 1, 200),
+        compact_module.CompactRecord(schema.events[2], 7, 0, 200, None, (-2,), 2, 200),
     )
     trace = compact_module.CompactTrace(header, schema, records, ())
 
@@ -1068,15 +1124,9 @@ def test_zero_duration_slice_stays_at_its_record_position(
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[2], 7, 0, 200, None, (-1,), 0, 200
-        ),
-        compact_module.CompactRecord(
-            schema.events[1], 7, 0, 200, 0, (1,), 1, 200
-        ),
-        compact_module.CompactRecord(
-            schema.events[2], 7, 0, 200, None, (-2,), 2, 200
-        ),
+        compact_module.CompactRecord(schema.events[2], 7, 0, 200, None, (-1,), 0, 200),
+        compact_module.CompactRecord(schema.events[1], 7, 0, 200, 0, (1,), 1, 200),
+        compact_module.CompactRecord(schema.events[2], 7, 0, 200, None, (-2,), 2, 200),
     )
     trace = compact_module.CompactTrace(header, schema, records, ())
 
@@ -1113,12 +1163,8 @@ def test_zero_duration_slices_do_not_nest_across_clock_generations(
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[1], 7, 0, 0, 0, (1,), 1, 0
-        ),
-        compact_module.CompactRecord(
-            schema.events[1], 8, 0, 0, 0, (2,), 3, 0
-        ),
+        compact_module.CompactRecord(schema.events[1], 7, 0, 0, 0, (1,), 1, 0),
+        compact_module.CompactRecord(schema.events[1], 8, 0, 0, 0, (2,), 3, 0),
     )
     syncs = (
         compact_module.CompactClockSync(7, 0, 0, 100, 0, 0, 0),
@@ -1164,12 +1210,8 @@ def test_sub_nanosecond_sequential_slices_do_not_become_nested(
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[1], 7, 0, 1, 1, (1,), 0, 1
-        ),
-        compact_module.CompactRecord(
-            schema.events[1], 7, 0, 2, 1, (2,), 1, 2
-        ),
+        compact_module.CompactRecord(schema.events[1], 7, 0, 1, 1, (1,), 0, 1),
+        compact_module.CompactRecord(schema.events[1], 7, 0, 2, 1, (2,), 1, 2),
     )
     trace = compact_module.CompactTrace(header, schema, records, ())
 
@@ -1211,12 +1253,8 @@ def test_wrapped_unanchored_prefix_is_placed_before_next_anchor(
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[2], 7, 0, 100, None, (-1,), 0, 100
-        ),
-        compact_module.CompactRecord(
-            schema.events[2], 7, 0, 200, None, (-1,), 1, 200
-        ),
+        compact_module.CompactRecord(schema.events[2], 7, 0, 100, None, (-1,), 0, 100),
+        compact_module.CompactRecord(schema.events[2], 7, 0, 200, None, (-1,), 1, 200),
     )
     sync = compact_module.CompactClockSync(8, 0, 0, 1_000, 0, 2, 0)
 
@@ -1272,9 +1310,7 @@ def test_v2_rejects_backwards_references_and_crossing_slices(
         schema.events[2], 7, 0, 200, None, (-1,), 1, 200
     )
     with pytest.raises(CompactTraceError, match="mapped clock time moves backwards"):
-        compact_module.CompactTrace(
-            header, schema, (prior_record,), mapped_backwards
-        )
+        compact_module.CompactTrace(header, schema, (prior_record,), mapped_backwards)
 
     unanchored_record = compact_module.CompactRecord(
         schema.events[2], 8, 0, 100, None, (-1,), 1, 100
@@ -1344,23 +1380,15 @@ def test_orphan_flow_end_does_not_create_a_flow_source(
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[5], 7, 0, 100, None, (55,), 0, 100
-        ),
-        compact_module.CompactRecord(
-            schema.events[4], 7, 0, 200, None, (55,), 1, 200
-        ),
-        compact_module.CompactRecord(
-            schema.events[5], 7, 0, 300, None, (55,), 2, 300
-        ),
+        compact_module.CompactRecord(schema.events[5], 7, 0, 100, None, (55,), 0, 100),
+        compact_module.CompactRecord(schema.events[4], 7, 0, 200, None, (55,), 1, 200),
+        compact_module.CompactRecord(schema.events[5], 7, 0, 300, None, (55,), 2, 300),
     )
     trace = compact_module.CompactTrace(header, schema, records, ())
     parsed = perfetto_pb2.Trace()
     parsed.ParseFromString(compact_trace_to_builder(trace).serialize())
     events = [
-        packet.track_event
-        for packet in parsed.packet
-        if packet.HasField("track_event")
+        packet.track_event for packet in parsed.packet if packet.HasField("track_event")
     ]
 
     assert events[0].name == "request (truncated begin)"
@@ -1394,23 +1422,15 @@ def test_repeated_flow_start_gets_a_new_lifecycle_id(
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[4], 7, 0, 100, None, (55,), 0, 100
-        ),
-        compact_module.CompactRecord(
-            schema.events[4], 7, 0, 200, None, (55,), 1, 200
-        ),
-        compact_module.CompactRecord(
-            schema.events[5], 7, 0, 300, None, (55,), 2, 300
-        ),
+        compact_module.CompactRecord(schema.events[4], 7, 0, 100, None, (55,), 0, 100),
+        compact_module.CompactRecord(schema.events[4], 7, 0, 200, None, (55,), 1, 200),
+        compact_module.CompactRecord(schema.events[5], 7, 0, 300, None, (55,), 2, 300),
     )
     trace = compact_module.CompactTrace(header, schema, records, ())
     parsed = perfetto_pb2.Trace()
     parsed.ParseFromString(compact_trace_to_builder(trace).serialize())
     events = [
-        packet.track_event
-        for packet in parsed.packet
-        if packet.HasField("track_event")
+        packet.track_event for packet in parsed.packet if packet.HasField("track_event")
     ]
 
     assert events[0].flow_ids
@@ -1455,20 +1475,14 @@ def test_orphan_flow_step_starts_a_truncated_retained_lifecycle() -> None:
         0,
     )
     records = (
-        compact_module.CompactRecord(
-            schema.events[8], 7, 0, 100, None, (55,), 0, 100
-        ),
-        compact_module.CompactRecord(
-            schema.events[5], 7, 0, 200, None, (55,), 1, 200
-        ),
+        compact_module.CompactRecord(schema.events[8], 7, 0, 100, None, (55,), 0, 100),
+        compact_module.CompactRecord(schema.events[5], 7, 0, 200, None, (55,), 1, 200),
     )
     trace = compact_module.CompactTrace(header, schema, records, ())
     parsed = perfetto_pb2.Trace()
     parsed.ParseFromString(compact_trace_to_builder(trace).serialize())
     retained = [
-        packet.track_event
-        for packet in parsed.packet
-        if packet.HasField("track_event")
+        packet.track_event for packet in parsed.packet if packet.HasField("track_event")
     ]
 
     assert retained[0].flow_ids
@@ -1496,9 +1510,7 @@ def test_timestamp_range_error_is_protocol_specific(schema: CompactSchema) -> No
         7,
         0,
     )
-    record = compact_module.CompactRecord(
-        schema.events[2], 7, 0, 0, None, (-1,), 0, 0
-    )
+    record = compact_module.CompactRecord(schema.events[2], 7, 0, 0, None, (-1,), 0, 0)
     sync = compact_module.CompactClockSync(7, 100, 100, 0, 0, 1, 100)
     trace = compact_module.CompactTrace(header, schema, (record,), (sync,))
 

@@ -51,6 +51,12 @@ if(RBCT_BUILD_TESTS)
     target_compile_features(test_compact_trace_publication PRIVATE c_std_99)
     add_test(NAME compact_trace_publication COMMAND test_compact_trace_publication)
 
+    add_executable(test_compact_trace_resources
+        tests/test_compact_trace_resources.c)
+    target_link_libraries(test_compact_trace_resources PRIVATE
+        retrobus_compact_trace)
+    add_test(NAME compact_trace_resources COMMAND test_compact_trace_resources)
+
     if(RBCT_BUILD_CPP)
         add_executable(test_compact_trace_cpp tests/test_compact_trace_cpp.cpp)
         target_link_libraries(test_compact_trace_cpp PRIVATE retrobus_compact_trace_cpp)

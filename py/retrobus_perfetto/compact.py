@@ -32,7 +32,14 @@ FORMAT_VERSION = 2
 FILE_HEADER_BYTES = 160
 CHUNK_HEADER_BYTES = 48
 CHUNK_BYTES = 4096
-RECORD_FRAME_BYTES = 4
+RECORD_FRAME_BYTES = 1
+MAX_RECORD_BYTES = 70
+FRAME_DELTA_ZERO_BASE = MAX_RECORD_BYTES
+FRAME_DELTA_ONE_BASE = 2 * MAX_RECORD_BYTES
+FRAME_DELTA_ONE_LIMIT = FRAME_DELTA_ONE_BASE + MAX_RECORD_BYTES
+FRAME_INLINE_ZERO_BASE = FRAME_DELTA_ONE_LIMIT
+FRAME_INLINE_ONE_BASE = FRAME_INLINE_ZERO_BASE + 22
+FRAME_INLINE_ONE_LIMIT = FRAME_INLINE_ONE_BASE + 22
 FLAG_FINALIZED = 0x0001
 FLAG_RING_WRAPPED = 0x0002
 FLAG_CHUNK_HEADER_CRC = 0x0004
@@ -76,7 +83,11 @@ class CompactTraceHeader:
 
     @property
     def format_version(self) -> int:
-        return FORMAT_VERSION if self.source_format.endswith("v2") else LEGACY_FORMAT_VERSION
+        return (
+            FORMAT_VERSION
+            if self.source_format.endswith("v2")
+            else LEGACY_FORMAT_VERSION
+        )
 
     @property
     def strict_clock(self) -> bool:
@@ -129,9 +140,9 @@ class CompactTrace:
     schema: CompactSchema
     records: tuple[CompactRecord, ...]
     clock_syncs: tuple[CompactClockSync, ...]
-    _anchors: Mapping[
-        int, tuple[tuple[int, ...], tuple[CompactClockSync, ...]]
-    ] = field(init=False, repr=False, compare=False)
+    _anchors: Mapping[int, tuple[tuple[int, ...], tuple[CompactClockSync, ...]]] = (
+        field(init=False, repr=False, compare=False)
+    )
     _relative_origins: Mapping[int, tuple[int, int]] = field(
         init=False, repr=False, compare=False
     )
@@ -156,9 +167,7 @@ class CompactTrace:
                     (first_sync,),
                 )
                 continue
-            sorted_syncs = sorted(
-                generation_syncs, key=lambda sync: sync.extended_tick
-            )
+            sorted_syncs = sorted(generation_syncs, key=lambda sync: sync.extended_tick)
             for previous, current in zip(sorted_syncs, sorted_syncs[1:]):
                 if current.extended_tick <= previous.extended_tick:
                     raise CompactTraceError(
@@ -288,9 +297,10 @@ class CompactTrace:
             elapsed_ticks = extended_tick - before.extended_tick
             span_ticks = after.extended_tick - before.extended_tick
             span_ns = after.reference_timestamp_ns - before.reference_timestamp_ns
-            return before.reference_timestamp_ns + (
-                elapsed_ticks * span_ns + span_ticks // 2
-            ) // span_ticks
+            return (
+                before.reference_timestamp_ns
+                + (elapsed_ticks * span_ns + span_ticks // 2) // span_ticks
+            )
 
         relative_origin = self._relative_origins.get(generation)
         if relative_origin is None:
@@ -418,8 +428,7 @@ def _extend_items(
                 and item.generation != header.initial_generation
                 and not (
                     isinstance(item, CompactClockSync)
-                    and item.generation
-                    == (header.initial_generation + 1) & 0xFFFF_FFFF
+                    and item.generation == (header.initial_generation + 1) & 0xFFFF_FFFF
                 )
             ):
                 raise CompactTraceError(
@@ -483,17 +492,21 @@ def _decode_one_record(
     track_id: int,
     order: int,
     strict: bool,
+    implicit_delta: int | None = None,
+    inline_event_id: int | None = None,
 ) -> tuple[CompactRecord | CompactClockSync, int, int, int]:
     mask = (1 << clock_width_bits) - 1
     half_range = 1 << (clock_width_bits - 1)
     selected_track = False
-    while offset < limit:
-        lead = data[offset]
-        offset += 1
+    while offset < limit or inline_event_id is not None:
+        if inline_event_id is None:
+            lead = data[offset]
+            offset += 1
+        else:
+            lead = inline_event_id
+            inline_event_id = None
         if lead == CONTROL_TRACK:
-            selected, offset = _read_varint(
-                data, offset, limit, canonical=strict
-            )
+            selected, offset = _read_varint(data, offset, limit, canonical=strict)
             if strict and (selected_track or selected == track_id):
                 raise CompactTraceError(
                     f"chunk {chunk.sequence} has a non-canonical track selection"
@@ -506,21 +519,17 @@ def _decode_one_record(
             selected_track = True
             continue
         if lead == CONTROL_CLOCK_SYNC:
+            if strict and implicit_delta is not None:
+                raise CompactTraceError("clock sync uses an implicit event delta")
             if strict and selected_track:
                 raise CompactTraceError(
                     f"chunk {chunk.sequence} selects a track before clock sync"
                 )
-            generation, offset = _read_varint(
-                data, offset, limit, canonical=strict
-            )
+            generation, offset = _read_varint(data, offset, limit, canonical=strict)
             before, offset = _read_varint(data, offset, limit, canonical=strict)
             after, offset = _read_varint(data, offset, limit, canonical=strict)
-            reference_ns, offset = _read_varint(
-                data, offset, limit, canonical=strict
-            )
-            uncertainty_ns, offset = _read_varint(
-                data, offset, limit, canonical=strict
-            )
+            reference_ns, offset = _read_varint(data, offset, limit, canonical=strict)
+            uncertainty_ns, offset = _read_varint(data, offset, limit, canonical=strict)
             if generation != chunk.generation:
                 raise CompactTraceError(
                     f"chunk {chunk.sequence} clock sync generation mismatch"
@@ -543,15 +552,13 @@ def _decode_one_record(
                     order,
                 ),
                 offset,
-                timestamp,
+                _midpoint_counter(before, after, mask) if strict else timestamp,
                 track_id,
             )
         if lead == CONTROL_LOSS:
             raise CompactTraceError("loss control is reserved")
         if lead == CONTROL_EXTENDED_EVENT:
-            event_id, offset = _read_varint(
-                data, offset, limit, canonical=strict
-            )
+            event_id, offset = _read_varint(data, offset, limit, canonical=strict)
             if strict and event_id <= 251:
                 raise CompactTraceError(
                     f"event ID {event_id} uses a non-canonical extended encoding"
@@ -561,7 +568,14 @@ def _decode_one_record(
         event = schema.events.get(event_id)
         if event is None:
             raise CompactTraceError(f"unknown compact event ID {event_id}")
-        delta, offset = _read_varint(data, offset, limit, canonical=strict)
+        if implicit_delta is None:
+            delta, offset = _read_varint(data, offset, limit, canonical=strict)
+            if strict and delta <= 1:
+                raise CompactTraceError(
+                    "event uses a non-canonical explicit timestamp delta"
+                )
+        else:
+            delta = implicit_delta
         if strict and delta & ~mask:
             raise CompactTraceError(
                 f"event {event.id} timestamp delta exceeds counter width"
@@ -569,13 +583,9 @@ def _decode_one_record(
         timestamp = (timestamp + delta) & mask
         duration: int | None = None
         if event.kind == "slice":
-            duration, offset = _read_varint(
-                data, offset, limit, canonical=strict
-            )
+            duration, offset = _read_varint(data, offset, limit, canonical=strict)
             if strict and duration >= half_range:
-                raise CompactTraceError(
-                    f"slice event {event.id} duration is ambiguous"
-                )
+                raise CompactTraceError(f"slice event {event.id} duration is ambiguous")
         arguments: list[Any] = []
         for argument in event.arguments:
             value, offset = _read_argument(
@@ -654,8 +664,8 @@ class CompactTraceReader:
                 magic = raw_header[:8]
                 if magic not in RBCT_MAGICS:
                     raise CompactTraceError("not a retrobus compact trace")
-                version, header_bytes, chunk_header_bytes, reserved = struct.unpack_from(
-                    "<HHHH", raw_header, 8
+                version, header_bytes, chunk_header_bytes, reserved = (
+                    struct.unpack_from("<HHHH", raw_header, 8)
                 )
                 chunk_bytes = struct.unpack_from("<I", raw_header, 16)[0]
                 if (
@@ -695,22 +705,16 @@ class CompactTraceReader:
                         if self.allow_unfinalized:
                             flags &= ~FLAG_FINALIZED
                         else:
-                            raise CompactTraceError(
-                                "compact file-header CRC mismatch"
-                            )
+                            raise CompactTraceError("compact file-header CRC mismatch")
                 elif not self.allow_unfinalized:
                     raise CompactTraceError("compact trace was not finalized")
-                recovering = self.allow_unfinalized and not bool(
-                    flags & FLAG_FINALIZED
-                )
+                recovering = self.allow_unfinalized and not bool(flags & FLAG_FINALIZED)
 
                 rate_numerator, rate_denominator = struct.unpack_from(
                     "<QQ", raw_header, 20
                 )
                 width = struct.unpack_from("<H", raw_header, 36)[0]
-                producer_id, schema_version = struct.unpack_from(
-                    "<II", raw_header, 40
-                )
+                producer_id, schema_version = struct.unpack_from("<II", raw_header, 40)
                 counts = struct.unpack_from("<QQQQQQ", raw_header, 96)
                 initial_generation, default_track = struct.unpack_from(
                     "<II", raw_header, 144
@@ -731,10 +735,14 @@ class CompactTraceReader:
                 if schema_hash != self.schema.sha256:
                     raise CompactTraceError("producer schema SHA-256 mismatch")
                 buffer_bytes = counts[5]
-                if buffer_bytes != file_size or (
-                    file_size - FILE_HEADER_BYTES
-                ) % CHUNK_BYTES or file_size < FILE_HEADER_BYTES + CHUNK_BYTES:
-                    raise CompactTraceError("compact buffer size does not match file size")
+                if (
+                    buffer_bytes != file_size
+                    or (file_size - FILE_HEADER_BYTES) % CHUNK_BYTES
+                    or file_size < FILE_HEADER_BYTES + CHUNK_BYTES
+                ):
+                    raise CompactTraceError(
+                        "compact buffer size does not match file size"
+                    )
                 if default_track not in self.schema.tracks:
                     raise CompactTraceError(f"unknown default track {default_track}")
 
@@ -765,7 +773,9 @@ class CompactTraceReader:
                             f"invalid chunk magic at physical chunk {physical_index}"
                         )
                     sequence, base = struct.unpack_from("<QQ", chunk_header, 4)
-                    generation, chunk_track = struct.unpack_from("<II", chunk_header, 20)
+                    generation, chunk_track = struct.unpack_from(
+                        "<II", chunk_header, 20
+                    )
                     used, records = struct.unpack_from("<HH", chunk_header, 28)
                     events = struct.unpack_from("<I", chunk_header, 32)[0]
                     syncs, chunk_reserved = struct.unpack_from("<HH", chunk_header, 36)
@@ -786,7 +796,9 @@ class CompactTraceReader:
                         crc_header = bytearray(chunk_header)
                         struct.pack_into("<I", crc_header, 44, 0)
                         actual_chunk_header_crc = zlib.crc32(crc_header) & 0xFFFF_FFFF
-                        if not (recovering and actual_chunk_header_crc == final_reserved):
+                        if not (
+                            recovering and actual_chunk_header_crc == final_reserved
+                        ):
                             if recovering:
                                 continue
                             raise CompactTraceError(
@@ -806,7 +818,9 @@ class CompactTraceReader:
                     if chunk_reserved != 0:
                         if recovering:
                             continue
-                        raise CompactTraceError(f"chunk {sequence} reserved fields are nonzero")
+                        raise CompactTraceError(
+                            f"chunk {sequence} reserved fields are nonzero"
+                        )
                     if version == FORMAT_VERSION and base & ~mask:
                         if recovering:
                             continue
@@ -838,12 +852,12 @@ class CompactTraceReader:
                         "compact trace changed while chunk headers were read"
                     )
         except OSError as error:
-            raise CompactTraceError(f"cannot read compact trace {self.path}: {error}") from error
+            raise CompactTraceError(
+                f"cannot read compact trace {self.path}: {error}"
+            ) from error
 
         chunks.sort(key=lambda chunk: chunk.sequence)
-        for index, (previous, current) in enumerate(
-            zip(chunks, chunks[1:]), start=1
-        ):
+        for index, (previous, current) in enumerate(zip(chunks, chunks[1:]), start=1):
             if current.sequence != previous.sequence + 1:
                 if recovering:
                     chunks = chunks[:index]
@@ -858,9 +872,7 @@ class CompactTraceReader:
         ):
             raise CompactTraceError("compact overwrite counts exceed total counts")
         if flags & FLAG_FINALIZED and not (
-            overwritten_records
-            <= overwritten_events
-            <= 2 * overwritten_records
+            overwritten_records <= overwritten_events <= 2 * overwritten_records
         ):
             raise CompactTraceError(
                 "compact overwrite counts have inconsistent event expansion"
@@ -872,12 +884,16 @@ class CompactTraceReader:
                     raise CompactTraceError("wrapped compact ring is incomplete")
             else:
                 if overwritten_records != 0 or overwritten_events != 0:
-                    raise CompactTraceError("non-wrapped compact ring has overwrite counts")
+                    raise CompactTraceError(
+                        "non-wrapped compact ring has overwrite counts"
+                    )
                 if any(
                     chunk.sequence != index or chunk.physical_index != index
                     for index, chunk in enumerate(chunks)
                 ):
-                    raise CompactTraceError("non-wrapped compact chunk layout is inconsistent")
+                    raise CompactTraceError(
+                        "non-wrapped compact chunk layout is inconsistent"
+                    )
         header = CompactTraceHeader(
             source_format=f"retrobus-compact-v{version}",
             flags=flags,
@@ -923,9 +939,10 @@ class CompactTraceReader:
                     payload = source.read(payload_bytes)
                     if len(payload) != payload_bytes:
                         raise CompactTraceError(f"chunk {chunk.sequence} is truncated")
-                    if self.header.finalized and (
-                        zlib.crc32(payload) & 0xFFFF_FFFF
-                    ) != chunk.crc32:
+                    if (
+                        self.header.finalized
+                        and (zlib.crc32(payload) & 0xFFFF_FFFF) != chunk.crc32
+                    ):
                         raise CompactTraceError(f"chunk {chunk.sequence} CRC mismatch")
                     if self.header.finalized and strict:
                         slack = source.read(
@@ -962,15 +979,37 @@ class CompactTraceReader:
                                 raise CompactTraceError(
                                     f"chunk {chunk.sequence} has a truncated record frame"
                                 )
-                            frame_length, frame_complement = struct.unpack_from(
-                                "<HH", payload, offset
-                            )
-                            if frame_length == 0 and frame_complement == 0 and recover:
+                            frame_marker = payload[offset]
+                            if frame_marker == 0 and recover:
                                 break
+                            implicit_delta: int | None = None
+                            inline_event_id: int | None = None
+                            if 1 <= frame_marker <= MAX_RECORD_BYTES:
+                                frame_length = frame_marker
+                            elif frame_marker <= FRAME_DELTA_ONE_BASE:
+                                frame_length = frame_marker - FRAME_DELTA_ZERO_BASE
+                                implicit_delta = 0
+                            elif frame_marker <= FRAME_DELTA_ONE_LIMIT:
+                                frame_length = frame_marker - FRAME_DELTA_ONE_BASE
+                                implicit_delta = 1
+                            elif frame_marker <= FRAME_INLINE_ONE_BASE:
+                                frame_length = 0
+                                implicit_delta = 0
+                                inline_event_id = (
+                                    frame_marker - FRAME_INLINE_ZERO_BASE - 1
+                                )
+                            elif frame_marker <= FRAME_INLINE_ONE_LIMIT:
+                                frame_length = 0
+                                implicit_delta = 1
+                                inline_event_id = (
+                                    frame_marker - FRAME_INLINE_ONE_BASE - 1
+                                )
+                            else:
+                                frame_length = 0
                             if (
-                                frame_length == 0
-                                or frame_length ^ frame_complement != 0xFFFF
-                                or frame_length > len(payload) - offset - RECORD_FRAME_BYTES
+                                frame_length == 0 and inline_event_id is None
+                            ) or frame_length > (
+                                len(payload) - offset - RECORD_FRAME_BYTES
                             ):
                                 if recover:
                                     break
@@ -991,6 +1030,8 @@ class CompactTraceReader:
                                     track_id=track_id,
                                     order=order,
                                     strict=True,
+                                    implicit_delta=implicit_delta,
+                                    inline_event_id=inline_event_id,
                                 )
                                 if decoded != frame_end:
                                     raise CompactTraceError(
@@ -1039,7 +1080,9 @@ class CompactTraceReader:
                 if self._identity(source) != self._file_identity:
                     raise CompactTraceError("compact trace changed while being read")
         except OSError as error:
-            raise CompactTraceError(f"cannot read compact trace {self.path}: {error}") from error
+            raise CompactTraceError(
+                f"cannot read compact trace {self.path}: {error}"
+            ) from error
         if self.header.finalized and retained_records != self.header.retained_records:
             raise CompactTraceError("file-level retained record count mismatch")
         if self.header.finalized and retained_events != self.header.retained_events:
@@ -1124,18 +1167,14 @@ def _add_arguments(wrapper: TrackEventWrapper, record: CompactRecord) -> None:
         _add_typed_annotation(
             wrapper, constant_specification, constant_specification.value
         )
-    for stored_specification, value in zip(
-        record.event.arguments, record.arguments
-    ):
+    for stored_specification, value in zip(record.event.arguments, record.arguments):
         _add_typed_annotation(wrapper, stored_specification, value)
 
 
 def _correlation_value(record: CompactRecord) -> int:
     name = record.event.correlation_argument
     if name is None:
-        raise CompactTraceError(
-            f"event {record.event.id} lacks a correlation argument"
-        )
+        raise CompactTraceError(f"event {record.event.id} lacks a correlation argument")
     value = record.argument(name)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise CompactTraceError(
@@ -1208,14 +1247,11 @@ def compact_trace_to_builder(
         component_start: int | None = None
         for record in zero_intervals:
             start_tick = record.extended_tick - (record.duration_ticks or 0)
-            if (
-                component_end is None
-                or (
-                    start_tick >= component_end
-                    and not (
-                        start_tick == component_start
-                        and record.extended_tick == component_end
-                    )
+            if component_end is None or (
+                start_tick >= component_end
+                and not (
+                    start_tick == component_start
+                    and record.extended_tick == component_end
                 )
             ):
                 components.append([])
@@ -1437,7 +1473,9 @@ def compact_trace_to_builder(
                     if record.event.kind == "flow_end":
                         flow_open.pop(flow_key)
         else:
-            actions.append(_Action(timestamp, 1, 0, record.order, record.event.kind, record))
+            actions.append(
+                _Action(timestamp, 1, 0, record.order, record.event.kind, record)
+            )
     for sync in visible_syncs:
         timestamp = trace.timestamp_ns(sync.generation, sync.extended_tick)
         last_timestamp = (
@@ -1481,7 +1519,10 @@ def compact_trace_to_builder(
 
     if normalize_start and actions:
         first = min(action.timestamp_ns for action in actions)
-        actions = [replace(action, timestamp_ns=action.timestamp_ns - first) for action in actions]
+        actions = [
+            replace(action, timestamp_ns=action.timestamp_ns - first)
+            for action in actions
+        ]
     actions.sort(
         key=lambda action: (
             action.timestamp_ns,
@@ -1527,7 +1568,9 @@ def compact_trace_to_builder(
         elif action.action == "slice_end":
             builder.end_slice(base_track, action.timestamp_ns)
         elif action.action == "instant":
-            wrapper = builder.add_instant_event(base_track, event.name, action.timestamp_ns)
+            wrapper = builder.add_instant_event(
+                base_track, event.name, action.timestamp_ns
+            )
             _add_category(wrapper, event.category)
             _add_arguments(wrapper, record)
         elif action.action == "counter":
@@ -1600,9 +1643,13 @@ def compact_trace_to_builder(
             _add_category(wrapper, event.category)
             _add_arguments(wrapper, record)
             if action.truncated is not None:
-                wrapper.add_annotations({f"retrobus.truncated_{action.truncated}": True})
+                wrapper.add_annotations(
+                    {f"retrobus.truncated_{action.truncated}": True}
+                )
         else:
-            raise CompactTraceError(f"unsupported reconstructed action {action.action!r}")
+            raise CompactTraceError(
+                f"unsupported reconstructed action {action.action!r}"
+            )
     return builder
 
 
@@ -1619,7 +1666,10 @@ def convert_compact_trace(
     output = Path(output_path)
     if input_source.resolve() == output.resolve():
         raise CompactTraceError("compact conversion output must not replace its input")
-    if not isinstance(schema_path, CompactSchema) and Path(schema_path).resolve() == output.resolve():
+    if (
+        not isinstance(schema_path, CompactSchema)
+        and Path(schema_path).resolve() == output.resolve()
+    ):
         raise CompactTraceError("compact conversion output must not replace its schema")
     trace = read_compact_trace(
         input_path, schema_path, allow_unfinalized=allow_unfinalized

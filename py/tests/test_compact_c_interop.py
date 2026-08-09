@@ -12,7 +12,7 @@ from retrobus_perfetto import (
     read_compact_trace,
     render_c_schema_header,
 )
-from retrobus_perfetto.compact import FLAG_CHUNK_HEADER_CRC
+from retrobus_perfetto.compact import FLAG_CHUNK_HEADER_CRC, FRAME_INLINE_ONE_LIMIT
 
 
 def _compile_producer(
@@ -56,16 +56,21 @@ def test_c_writer_python_decoder_interoperability(tmp_path: Path) -> None:
     capture = tmp_path / "interop.rbct"
     subprocess.run([executable, capture], check=True)
 
+    image = capture.read_bytes()
+    first_marker = image[160 + 48]
+    assert image[160 + 48 + 1 + first_marker] == FRAME_INLINE_ONE_LIMIT
+
     trace = read_compact_trace(capture, schema)
     assert trace.header.flags & FLAG_CHUNK_HEADER_CRC
-    assert trace.header.total_records == 4
-    assert trace.header.total_events == 5
+    assert trace.header.total_records == 5
+    assert trace.header.total_events == 6
     assert trace.header.dropped_records == 3
-    assert [record.event.id for record in trace.records] == [2, 1, 3, 300]
-    assert trace.records[0].arguments == (-7,)
-    assert trace.records[1].duration_ticks == 40
-    assert trace.records[2].track_id == 1
-    assert trace.records[3].arguments == (0xDEAD_BEEF_1234_5678,)
+    assert [record.event.id for record in trace.records] == [21, 2, 1, 3, 300]
+    assert trace.records[0].arguments == ()
+    assert trace.records[1].arguments == (-7,)
+    assert trace.records[2].duration_ticks == 40
+    assert trace.records[3].track_id == 1
+    assert trace.records[4].arguments == (0xDEAD_BEEF_1234_5678,)
 
 
 def test_wrapped_c_writer_remains_decodable_after_anchor_loss(
@@ -84,9 +89,9 @@ def test_wrapped_c_writer_remains_decodable_after_anchor_loss(
     trace = read_compact_trace(capture, schema)
 
     assert trace.header.ring_wrapped
-    assert trace.header.total_records == 500
-    assert trace.header.overwritten_records == 252
-    assert len(trace.records) == 248
+    assert trace.header.total_records == 672
+    assert trace.header.overwritten_records == 336
+    assert len(trace.records) == 336
     assert {record.generation for record in trace.records} == {7}
     assert {sync.generation for sync in trace.clock_syncs} == {8}
     assert trace.uncorrelated_generations == (7,)
@@ -109,16 +114,14 @@ def test_live_wrapped_c_writer_recovers_after_anchor_loss(tmp_path: Path) -> Non
 
     assert not trace.header.finalized
     assert trace.header.ring_wrapped
-    assert len(trace.records) == 248
+    assert len(trace.records) == 336
     assert trace.uncorrelated_generations == (7,)
 
     legacy_image = bytearray(capture.read_bytes())
     struct.pack_into("<H", legacy_image, 38, 0)
     legacy_capture = tmp_path / "live-wrapped-without-flag.rbct"
     legacy_capture.write_bytes(legacy_image)
-    inferred = read_compact_trace(
-        legacy_capture, schema, allow_unfinalized=True
-    )
+    inferred = read_compact_trace(legacy_capture, schema, allow_unfinalized=True)
     assert inferred.header.ring_wrapped
     assert inferred.uncorrelated_generations == (7,)
 
