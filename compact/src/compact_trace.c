@@ -61,18 +61,28 @@
 #endif
 
 static void rbct_zero(uint8_t* destination, size_t size) {
+#if defined(_MSC_VER)
+  volatile uint8_t* output = destination;
+#else
+  uint8_t* output = destination;
+#endif
   size_t index;
   for (index = 0; index < size; ++index) {
-    destination[index] = 0;
+    output[index] = 0;
   }
 }
 
 static void rbct_copy(uint8_t* destination,
                       const uint8_t* source,
                       size_t size) {
+#if defined(_MSC_VER)
+  volatile uint8_t* output = destination;
+#else
+  uint8_t* output = destination;
+#endif
   size_t index;
   for (index = 0; index < size; ++index) {
-    destination[index] = source[index];
+    output[index] = source[index];
   }
 }
 

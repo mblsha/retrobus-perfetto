@@ -23,7 +23,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
         -fno-stack-protector
     )
 elseif(MSVC)
-    target_compile_options(retrobus_compact_trace PRIVATE /GS- /Zl)
+    target_compile_options(retrobus_compact_trace PRIVATE /GS- /Oi- /Zl)
 endif()
 
 if(RBCT_BUILD_CPP)
