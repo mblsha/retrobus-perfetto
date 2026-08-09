@@ -268,8 +268,7 @@ static void rbct_commit_bit_record(uint8_t* chunk,
    * store.  A reader therefore sees either the old logical prefix or the whole
    * new record, even when a record shares its first byte with its predecessor.
    */
-  rbct_append_payload_bits(payload, &next_bits,
-                           (uint64_t)(code_info & 0x0fffu),
+  rbct_append_payload_bits(payload, &next_bits, (uint64_t)(code_info & 0x0fffu),
                            rbct_code_width(code_info));
   if (literal_kind != RBCT_HOT_RECORD) {
     rbct_append_payload_bits(payload, &next_bits, literal_kind, 2u);
@@ -352,9 +351,8 @@ static uint8_t rbct_model_state(const rbct_writer_t* writer) {
 }
 
 static void rbct_set_model_state(rbct_writer_t* writer, uint8_t model) {
-  writer->state =
-      (uint8_t)((writer->state & (uint8_t)~RBCT_STATE_MODEL_MASK) |
-                (uint8_t)(model << RBCT_STATE_MODEL_SHIFT));
+  writer->state = (uint8_t)((writer->state & (uint8_t)~RBCT_STATE_MODEL_MASK) |
+                            (uint8_t)(model << RBCT_STATE_MODEL_SHIFT));
 }
 
 static void rbct_advance_model(rbct_writer_t* writer, uint32_t event_id) {
@@ -388,9 +386,7 @@ static size_t rbct_profile_slot_count(const rbct_codec_profile_t* profile) {
 static uint32_t rbct_profile_hash(uint32_t key,
                                   uint32_t multiplier,
                                   size_t size) {
-  const unsigned shift = size == 64u   ? 26u
-                         : size == 128u ? 25u
-                                        : 24u;
+  const unsigned shift = size == 64u ? 26u : size == 128u ? 25u : 24u;
   return (key * multiplier) >> shift;
 }
 
@@ -409,8 +405,8 @@ static uint16_t rbct_profile_lookup(const rbct_writer_t* writer,
       duration > 0xffu) {
     return 0u;
   }
-  key = ((uint32_t)rbct_model_state(writer) << 24u) |
-        (event_id << 16u) | ((uint32_t)delta << 8u) | (uint32_t)duration;
+  key = ((uint32_t)rbct_model_state(writer) << 24u) | (event_id << 16u) |
+        ((uint32_t)delta << 8u) | (uint32_t)duration;
   bucket_count = rbct_profile_bucket_count(profile);
   slot_count = rbct_profile_slot_count(profile);
   bucket = rbct_profile_hash(key, profile->hash_multiplier1, bucket_count);
@@ -424,7 +420,7 @@ static uint16_t rbct_profile_lookup(const rbct_writer_t* writer,
 static int rbct_code_info_valid(uint16_t code_info) {
   const uint8_t width = rbct_code_width(code_info);
   return width != 0u && width <= RBCT_CODEC_MAX_CODE_BITS &&
-         (code_info & 0x0fffu) < ((uint16_t)1u << width);
+         (code_info & 0x0fffu) < (1u << width);
 }
 
 static int rbct_profile_valid(const rbct_codec_profile_t* profile,
@@ -643,13 +639,12 @@ static rbct_status_t rbct_append_event(rbct_writer_t* writer,
     rbct_start_chunk(writer, writer->current_generation, timestamp);
   }
   wire_delta = rbct_clock_delta(writer, timestamp, writer->current_timestamp);
-  code_info = rbct_encode_event(
-      writer, encoded, &encoded_size, &literal_kind, wire_delta, track_id,
-      event_id, event_opcode, has_duration, duration, arguments,
-      argument_count);
+  code_info =
+      rbct_encode_event(writer, encoded, &encoded_size, &literal_kind,
+                        wire_delta, track_id, event_id, event_opcode,
+                        has_duration, duration, arguments, argument_count);
   record_bits = rbct_code_width(code_info) +
-                (literal_kind == RBCT_HOT_RECORD ? 0u
-                                                 : 2u + encoded_size * 8u);
+                (literal_kind == RBCT_HOT_RECORD ? 0u : 2u + encoded_size * 8u);
 
   chunk = rbct_chunk(writer, writer->current_chunk);
   committed_bits = rbct_chunk_committed_bits(chunk);
@@ -658,14 +653,13 @@ static rbct_status_t rbct_append_event(rbct_writer_t* writer,
       (RBCT_CHUNK_BYTES - RBCT_CHUNK_HEADER_BYTES) * 8u - committed_bits) {
     rbct_start_chunk(writer, writer->current_generation, timestamp);
     wire_delta = 0u;
-    code_info = rbct_encode_event(
-        writer, encoded, &encoded_size, &literal_kind, wire_delta, track_id,
-        event_id, event_opcode, has_duration, duration, arguments,
-        argument_count);
-    record_bits = rbct_code_width(code_info) +
-                  (literal_kind == RBCT_HOT_RECORD
-                       ? 0u
-                       : 2u + encoded_size * 8u);
+    code_info =
+        rbct_encode_event(writer, encoded, &encoded_size, &literal_kind,
+                          wire_delta, track_id, event_id, event_opcode,
+                          has_duration, duration, arguments, argument_count);
+    record_bits =
+        rbct_code_width(code_info) +
+        (literal_kind == RBCT_HOT_RECORD ? 0u : 2u + encoded_size * 8u);
     chunk = rbct_chunk(writer, writer->current_chunk);
     committed_bits = 0u;
     chunk_records = 0u;
@@ -711,8 +705,7 @@ rbct_status_t rbct_writer_init(rbct_writer_t* writer,
   size_t usable_bytes;
   uint8_t* header;
   if (writer == NULL || buffer == NULL || config == NULL ||
-      ((uintptr_t)buffer & 3u) != 0u ||
-      config->clock_rate_numerator == 0u ||
+      ((uintptr_t)buffer & 3u) != 0u || config->clock_rate_numerator == 0u ||
       config->clock_rate_denominator == 0u || config->clock_width_bits == 0u ||
       config->clock_width_bits > 64u ||
       (scope_capacity != 0u && scope_storage == NULL) ||
@@ -736,7 +729,8 @@ rbct_status_t rbct_writer_init(rbct_writer_t* writer,
                           sizeof(*config)) ||
       rbct_profile_overlaps(config->codec_profile, writer, sizeof(*writer)) ||
       rbct_profile_overlaps(config->codec_profile, buffer, usable_bytes) ||
-      rbct_profile_overlaps(config->codec_profile, scope_storage, scope_bytes)) {
+      rbct_profile_overlaps(config->codec_profile, scope_storage,
+                            scope_bytes)) {
     return RBCT_INVALID_ARGUMENT;
   }
 
@@ -796,9 +790,8 @@ rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
                                 uint32_t event_id,
                                 const rbct_argument_t* arguments,
                                 size_t argument_count) {
-  return rbct_writer_begin_opcode(writer, timestamp, track_id, event_id,
-                                  0u, arguments,
-                                  argument_count);
+  return rbct_writer_begin_opcode(writer, timestamp, track_id, event_id, 0u,
+                                  arguments, argument_count);
 }
 
 rbct_status_t rbct_writer_begin_opcode(rbct_writer_t* writer,
@@ -873,9 +866,8 @@ rbct_status_t rbct_writer_emit(rbct_writer_t* writer,
                                uint32_t event_id,
                                const rbct_argument_t* arguments,
                                size_t argument_count) {
-  return rbct_writer_emit_opcode(writer, timestamp, track_id, event_id,
-                                 0u, 0u, 0u, arguments,
-                                 argument_count);
+  return rbct_writer_emit_opcode(writer, timestamp, track_id, event_id, 0u, 0u,
+                                 0u, arguments, argument_count);
 }
 
 rbct_status_t rbct_writer_emit_opcode(rbct_writer_t* writer,

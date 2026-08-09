@@ -63,8 +63,8 @@ int main(void) {
   config.clock_rate_denominator = 1u;
   config.clock_width_bits = 64u;
   CHECK(rbct_writer_init(&writer, unaligned_storage.bytes + 1u,
-                         sizeof(storage.bytes), &scope, 1u, &config) ==
-        RBCT_INVALID_ARGUMENT);
+                         sizeof(storage.bytes), &scope, 1u,
+                         &config) == RBCT_INVALID_ARGUMENT);
   config.codec_profile = &test_codec_profile;
   CHECK(rbct_writer_init(&writer, buffer, sizeof(storage.bytes), &scope, 1u,
                          &config) == RBCT_OK);
@@ -98,8 +98,8 @@ int main(void) {
   CHECK(rbct_writer_init(&writer, buffer, sizeof(storage.bytes), &scope, 1u,
                          &config) == RBCT_OK);
   for (index = 0u; index < 100u; ++index) {
-    CHECK(rbct_writer_begin_opcode(&writer, 2u * index + 1u, 0u, 0u, 1u,
-                                   NULL, 0u) == RBCT_OK);
+    CHECK(rbct_writer_begin_opcode(&writer, 2u * index + 1u, 0u, 0u, 1u, NULL,
+                                   0u) == RBCT_OK);
     CHECK(rbct_writer_end(&writer, 2u * index + 2u) == RBCT_OK);
   }
   chunk = buffer + RBCT_FILE_HEADER_BYTES;
