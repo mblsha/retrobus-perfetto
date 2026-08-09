@@ -8,14 +8,17 @@
 extern "C" {
 #endif
 
-#define RBCT_FORMAT_VERSION 3u
-#define RBCT_FILE_HEADER_BYTES 160u
+#define RBCT_FORMAT_VERSION 4u
+#define RBCT_FILE_HEADER_BYTES 192u
 #define RBCT_CHUNK_HEADER_BYTES 48u
 #define RBCT_CHUNK_BYTES 4096u
-#define RBCT_RECORD_COMMIT_BYTES 1u
-#define RBCT_RECORD_FRAME_BYTES RBCT_RECORD_COMMIT_BYTES
+#define RBCT_RECORD_COMMIT_BYTES 0u
+#define RBCT_RECORD_FRAME_BYTES 0u
 #define RBCT_MAX_RECORD_BYTES 70u
 #define RBCT_MAX_ARGUMENTS 4u
+#define RBCT_CODEC_MAX_CODE_BITS 12u
+#define RBCT_CODEC_PROFILE_SMALL_ENTRIES 128u
+#define RBCT_CODEC_PROFILE_LARGE_ENTRIES 247u
 #define RBCT_DIRECT_EVENT_ID_MAX 251u
 #define RBCT_DIRECT_EVENT_OPCODE_MAX 251u
 
@@ -42,6 +45,24 @@ typedef struct rbct_argument {
   uint8_t encoding;
   uint8_t reserved[7];
 } rbct_argument_t;
+
+/*
+ * Read-only v4 codec data.  The generated arrays live in ROM; the writer only
+ * retains this descriptor pointer.  code_info packs the bit length in bits
+ * 12..15 and the LSB-first code in bits 0..11.  entry_limit is 128 or 247.
+ */
+typedef struct rbct_codec_profile {
+  uint8_t sha256[32];
+  uint8_t schema_sha256[32];
+  uint32_t state_event_ids[2];
+  uint16_t entry_limit;
+  uint32_t hash_multiplier1;
+  uint32_t hash_multiplier2;
+  const uint8_t* displacements;
+  const uint32_t* keys;
+  const uint16_t* code_info;
+  uint16_t escape_code_info[3];
+} rbct_codec_profile_t;
 
 static inline rbct_argument_t rbct_argument_u64(uint64_t value) {
   rbct_argument_t argument = {
@@ -70,6 +91,7 @@ typedef struct rbct_config {
   uint8_t session_id[16];
   uint32_t initial_clock_generation;
   uint32_t default_track_id;
+  const rbct_codec_profile_t* codec_profile;
 } rbct_config_t;
 
 typedef struct rbct_scope {
@@ -100,6 +122,7 @@ typedef struct rbct_writer {
   uint32_t default_track;
   uint16_t clock_width_bits;
   uint8_t state;
+  const rbct_codec_profile_t* codec_profile;
   rbct_scope_t* scopes;
   size_t scope_capacity;
   size_t scope_depth;
@@ -124,8 +147,9 @@ rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
                                 size_t argument_count);
 
 /*
- * Generic begin/emit use the valid but less-dense extended-event fallback.
- * Schema-generated emitters use these opcode APIs for dense v3 records.
+ * Generic begin/emit use an extended identity in a v4 escape literal.
+ * Schema-generated emitters pass their deterministic ordinary identity through
+ * these compatibility APIs; profile hits depend only on semantic tuple data.
  */
 rbct_status_t rbct_writer_begin_opcode(rbct_writer_t* writer,
                                        uint64_t timestamp,

@@ -6,6 +6,7 @@ on:
     paths:
       - 'compact/**'
       - 'py/retrobus_perfetto/compact.py'
+      - 'py/retrobus_perfetto/compact_codec.py'
       - 'py/retrobus_perfetto/compact_profile.py'
       - 'py/retrobus_perfetto/compact_schema.py'
       - 'py/tests/test_compact.py'
@@ -14,13 +15,16 @@ on:
       - 'py/pyproject.toml'
       - 'py/uv.lock'
       - 'tools/compact_schema_header.py'
+      - 'tools/compact_codec_profile.py'
       - 'tools/compact_trace_profile.py'
       - 'tools/compact_trace_to_perfetto.py'
+      - 'tools/compact_v4_historical_replay.py'
       - '.github/workflows/compact-ci.yml'
   pull_request:
     paths:
       - 'compact/**'
       - 'py/retrobus_perfetto/compact.py'
+      - 'py/retrobus_perfetto/compact_codec.py'
       - 'py/retrobus_perfetto/compact_profile.py'
       - 'py/retrobus_perfetto/compact_schema.py'
       - 'py/tests/test_compact.py'
@@ -29,8 +33,10 @@ on:
       - 'py/pyproject.toml'
       - 'py/uv.lock'
       - 'tools/compact_schema_header.py'
+      - 'tools/compact_codec_profile.py'
       - 'tools/compact_trace_profile.py'
       - 'tools/compact_trace_to_perfetto.py'
+      - 'tools/compact_v4_historical_replay.py'
       - '.github/workflows/compact-ci.yml'
 
 jobs:
@@ -92,7 +98,9 @@ jobs:
           test -z "$undefined"
           text_bytes="$(size build/compact/compact_trace_armv5te.o | \
             awk 'NR == 2 {print $1}')"
-          test "$text_bytes" -le 7000
+          # V4 adds the bit publisher, CHD lookup, and profile validation. The
+          # measured ARMv5TE -Os object is 8360 bytes; retain a narrow margin.
+          test "$text_bytes" -le 8500
           max_stack="$(awk '{print $2}' \
             build/compact/compact_trace_armv5te.su | sort -nr | head -1)"
           test "$max_stack" -le 192
@@ -106,6 +114,14 @@ jobs:
             -Wall -Wextra -Werror -Icompact/include \
             -S compact/src/compact_trace.c -o build/compact/compact_trace_armv7a.s
           grep -Eq '\bdmb\b' build/compact/compact_trace_armv7a.s
+          clang --target=armv5te-none-eabi -march=armv5te -mfloat-abi=soft \
+            -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
+            -ffixed-r9 -fno-inline -Wall -Wextra -Werror -Icompact/include \
+            -S compact/src/compact_trace.c \
+            -o build/compact/compact_trace_armv5te_noinline.s
+          sed -n '/rbct_publish_chunk_cursor:/,/\.Lfunc_end/p' \
+            build/compact/compact_trace_armv5te_noinline.s | \
+            grep -Eq '\bstr\b.*#28'
 
   msvc:
     name: MSVC x64

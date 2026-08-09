@@ -56,18 +56,21 @@ trace_data = builder.serialize()
 
 ```python
 from retrobus_perfetto import (
+    CompactCodecProfile,
     CompactSchema,
     convert_compact_trace,
     profile_compact_trace,
 )
 
 schema = CompactSchema.load("producer-schema.json")
+codec = CompactCodecProfile.load("producer-codec.json", schema)
 summary = convert_compact_trace(
     "capture.rbct",
     schema,
     "capture.perfetto-trace",
+    codec_profile=codec,
 )
-density = profile_compact_trace("capture.rbct", schema)
+density = profile_compact_trace("capture.rbct", schema, codec_profile=codec)
 ```
 
 `CompactTraceReader.iter_items()` validates and yields one bounded chunk at a
@@ -76,10 +79,17 @@ is not constrained and pre-indexes clock generations and correlation anchors
 for efficient timestamp conversion. Both entry points require the exact
 external producer schema identified by the capture header. Unfinalized reads
 are explicitly best-effort and report retained, successfully decoded records.
-`profile_compact_trace()` replays those logical records through v1/v2/v3 and
-reports byte attribution, density, varint widths, opcode hits, and chunk use.
+Profiled v4 captures additionally require the exact external codec profile
+whose SHA-256 is stored in the capture header; literal-only v4 and v1/v2/v3 do
+not. `profile_compact_trace()` replays logical records through v1/v2/v3/v4 and
+reports byte/bit attribution, density, varint widths, profile hits, and chunk
+use.
 `CompactTrace.uncorrelated_generations` identifies relative-only generations,
 including a wrapped prefix whose original clock anchor was overwritten.
+The v4 density model counts the two literal-kind bits on profile misses and
+reports both exact committed bits and per-chunk byte-rounded payload use; those
+payload figures exclude file/chunk headers and chunk slack, which are reported
+separately.
 
 ### Direct Proto Access
 

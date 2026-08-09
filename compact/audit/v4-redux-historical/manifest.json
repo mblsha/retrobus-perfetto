@@ -1,0 +1,65 @@
+{
+  "captures": [
+    {
+      "acceptance_corpus": false,
+      "bytes": 352352,
+      "clock_domain": "historical host monotonic microseconds",
+      "device": "Zire 31 QEMU",
+      "id": "zire31-cold-boot",
+      "path": "zire31-boot-compact-v1.rdxt",
+      "provenance": "Historical local Redux RDXTRC1 build artifact; source revision was not embedded in the capture",
+      "scenario": "cold boot",
+      "sha256": "5ca62c769bd6872003401e9836c4350efd76d433e88c956c57d1baa9eacd6701"
+    },
+    {
+      "acceptance_corpus": false,
+      "bytes": 819296,
+      "clock_domain": "historical host monotonic microseconds",
+      "device": "Tungsten T3 QEMU",
+      "id": "t3-cold-boot",
+      "path": "t3-boot-compact-v1.rdxt",
+      "provenance": "Historical local Redux RDXTRC1 build artifact; source revision was not embedded in the capture",
+      "scenario": "cold boot",
+      "sha256": "f0e601d3c851723ba7d4bf22ff6ca418fd29cfc176fe46557972cb36499c3607"
+    }
+  ],
+  "description": "Reproducibility manifest for the historical Redux v4 density diagnostic",
+  "format": "retrobus-compact-v4-audit-manifest-v1",
+  "methodology": {
+    "container_accounting": "Payload bytes are byte-rounded independently in each modeled 4048-byte payload. Total container bytes are file header plus complete 4096-byte chunks and therefore include chunk headers and payload slack.",
+    "evaluation": "In-sample diagnostic replay of each complete capture using the one shared profile; not an acceptance or generalization result",
+    "literal_miss_cost": "Implemented v4 escape prefix plus two literal-kind bits plus the schema-shaped literal body",
+    "logical_replay": "Decode each RDXTRC1 chunk as event-ID byte, ULEB delta, schema duration, and schema stored arguments; reconstruct one ordered logical stream; then independently repack it into fresh v3/v4 chunks",
+    "profile_mapping": "Exact (three-state context, semantic event ID, delta, duration) tuples for same-track zero-stored-argument completed slices",
+    "source_limitations": "The captures predate RBCT, use host time, embed no source revision or schema hash, and are interpreted with the checksum-pinned current Redux schema whose used IDs 0..220 retain the required shapes",
+    "v4_chunk_state": "Timestamp base, default track, and model state 2 reset at each newly modeled v4 chunk"
+  },
+  "outputs": {
+    "profiles": {
+      "128": "profile-128.json",
+      "247": "profile-247.json"
+    },
+    "results": "results.json"
+  },
+  "schema": {
+    "canonical_sha256": "532104a74d9ab2a5a79d40cfcb9a534ff7684cc3571a210d2622880d658da886",
+    "file_sha256": "8afcb1c4acf8e45801334a1305edfa920f8bdb9aee4c2597a966c848b0843871",
+    "path": "schemas/redux-trace-v1.json"
+  },
+  "training": {
+    "capture_ids": [
+      "zire31-cold-boot",
+      "t3-cold-boot"
+    ],
+    "entry_limits": [
+      128,
+      247
+    ],
+    "split_policy": "none; concatenate both complete captures for one shared in-sample diagnostic profile",
+    "state_events": [
+      218,
+      83
+    ],
+    "state_selection": "explicit fixed pair from the prior bounded experiment; the preserved headline does not rerun automatic pair selection"
+  }
+}

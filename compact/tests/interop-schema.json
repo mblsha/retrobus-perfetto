@@ -17,9 +17,21 @@
       "name": "bytes",
       "kind": "counter",
       "unit": "bytes"
+    },
+    {
+      "id": 4294967295,
+      "name": "maximum track",
+      "kind": "thread"
     }
   ],
   "events": [
+    {
+      "id": 0,
+      "name": "idle",
+      "category": "runtime",
+      "kind": "slice",
+      "arguments": []
+    },
     {
       "id": 1,
       "name": "work",
@@ -85,6 +97,18 @@
           "name": "address",
           "type": "fixed64"
         }
+      ]
+    },
+    {
+      "id": 4294967295,
+      "name": "maximum record",
+      "category": "runtime",
+      "kind": "slice",
+      "arguments": [
+        {"name": "a", "type": "uint"},
+        {"name": "b", "type": "uint"},
+        {"name": "c", "type": "uint"},
+        {"name": "d", "type": "uint"}
       ]
     }
   ]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile compact trace density by replaying v1, v2, and v3 encodings."""
+"""Profile compact trace density by replaying v1, v2, v3, and v4 encodings."""
 
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ from retrobus_perfetto.compact_profile import (  # noqa: E402
 from retrobus_perfetto.compact_schema import (  # noqa: E402
     CompactSchema,
     CompactSchemaError,
+)
+from retrobus_perfetto.compact_codec import (  # noqa: E402
+    CompactCodecProfile,
+    CompactCodecProfileError,
 )
 
 
@@ -52,6 +56,7 @@ def main() -> int:
     parser.add_argument("--schema", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--codec-profile", type=Path)
     parser.add_argument("--allow-unfinalized", action="store_true")
     parser.add_argument(
         "--fail-on-v2-mismatch",
@@ -74,6 +79,11 @@ def main() -> int:
 
     try:
         schema = CompactSchema.load(schema_path)
+        codec_profile = (
+            CompactCodecProfile.load(args.codec_profile, schema)
+            if args.codec_profile is not None
+            else None
+        )
         reports = []
         for capture, provenance in captures:
             report = dict(
@@ -81,15 +91,21 @@ def main() -> int:
                     capture,
                     schema,
                     allow_unfinalized=args.allow_unfinalized,
+                    codec_profile=codec_profile,
                 )
             )
             report["provenance"] = provenance
             reports.append(report)
-    except (CompactSchemaError, CompactTraceError, OSError) as error:
+    except (
+        CompactSchemaError,
+        CompactCodecProfileError,
+        CompactTraceError,
+        OSError,
+    ) as error:
         parser.error(str(error))
 
     result = {
-        "format": "retrobus-compact-density-profile-v1",
+        "format": "retrobus-compact-density-profile-v2",
         "schema_path": str(schema_path),
         "captures": reports,
         "aggregate": aggregate_density_reports(reports),

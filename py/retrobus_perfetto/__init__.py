@@ -27,6 +27,12 @@ from .compact_schema import (
     CompactTrackSchema,
     render_c_schema_header,
 )
+from .compact_codec import (
+    CompactCodecEntry,
+    CompactCodecProfile,
+    CompactCodecProfileError,
+    render_c_codec_profile,
+)
 from .compact_profile import (
     aggregate_density_reports,
     model_compact_trace,
@@ -53,6 +59,9 @@ __all__ = [
     "PerfettoTraceBuilder",
     "CompactArgumentSchema",
     "CompactClockSync",
+    "CompactCodecEntry",
+    "CompactCodecProfile",
+    "CompactCodecProfileError",
     "CompactEventSchema",
     "CompactRecord",
     "CompactSchema",
@@ -77,6 +86,7 @@ __all__ = [
     "profile_compact_trace",
     "resolve_interned_trace",
     "read_compact_trace",
+    "render_c_codec_profile",
     "render_c_schema_header",
     "verify_trace_index",
     "proto",

@@ -1,4 +1,4 @@
-# Retrobus compact trace format v3 (`.rbct`)
+# Retrobus compact trace format v4 (`.rbct`)
 
 Retrobus compact trace is a producer-neutral, bounded flight-recorder format
 for targets where emitting native Perfetto protobuf would perturb the workload.
@@ -26,7 +26,7 @@ An `.rbct` image is the exact usable recorder buffer. Writers reject buffer
 sizes that are not exactly one header plus an integral number of chunks:
 
 ```text
-160-byte file header
+192-byte file header (v4; versions 1..3 use 160 bytes)
 4096-byte chunk 0
 4096-byte chunk 1
 ...
@@ -34,25 +34,26 @@ sizes that are not exactly one header plus an integral number of chunks:
 
 The chunks form a ring. Physical chunk order is not chronological after wrap;
 readers order valid chunks by their 64-bit sequence number. Unused chunks are
-zero. Versions 2 and 3 also require the payload slack after each valid chunk's
-`used` cursor to be zero.
+zero. Versions 2 through 4 also require payload slack after each valid chunk's
+published cursor to be zero.
 `rbct_writer_finalize()` computes CRCs after measurement, publishes the final
 header CRC, and commits the image by setting the finalized bit last. Versions 2
-and 3 protect both payloads and chunk headers, and readers reject a finalized
+through 4 protect both payloads and chunk headers, and readers reject a finalized
 image in either version without both protections. Readers
 remain compatible with finalized version 1 images that protect payloads only.
 
 An explicitly requested crash-image read is best-effort. Version 2 scans
-transactional record frames. Version 3 scans nonzero committed opcodes. Neither
-trusts the two-byte payload cursor or count fields, which may lag publication;
-both retain only the completely published record prefix. In a committed older
+transactional record frames. Version 3 scans nonzero committed opcodes. Version
+4 trusts its aligned atomic bit cursor, which is the publication marker rather
+than advisory metadata. All retain only the completely published record prefix.
+In a committed older
 chunk, zero ends that chunk's slack and scanning continues with the next chunk;
 in the newest chunk, zero ends the capture. An invalid, truncated, malformed,
 or noncanonical record stops the capture because the single writer cannot have
 committed a later record first.
 Total overwrite/drop accounting is unavailable and is conservatively reported
 as the retained records only. The target writer invokes
-`RBCT_PLATFORM_PUBLISH_BARRIER()` before each commit opcode, and after an
+`RBCT_PLATFORM_PUBLISH_BARRIER()` before each publication store, and after an
 invalidation marker when later writes must not pass it. Built-in hardware store
 barriers cover
 ARMv7+, AArch64, and RISC-V; x86 uses its store-ordering guarantee plus a
@@ -70,9 +71,9 @@ rejects a file that changes between its header and payload passes.
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
-| 0 | 8 | `RBCTRC3\0` |
-| 8 | 2 | format version (`3`) |
-| 10 | 2 | file header bytes (`160`) |
+| 0 | 8 | `RBCTRC4\0` |
+| 8 | 2 | format version (`4`) |
+| 10 | 2 | file header bytes (`192`) |
 | 12 | 2 | chunk header bytes (`48`) |
 | 14 | 2 | reserved, zero |
 | 16 | 4 | chunk bytes (`4096`) |
@@ -94,6 +95,7 @@ rejects a file that changes between its header and payload passes.
 | 148 | 4 | default track ID |
 | 152 | 4 | CRC32 of the header with this field zero |
 | 156 | 4 | reserved, zero |
+| 160 | 32 | SHA-256 of the external codec profile, or zero for literal-only v4 |
 
 The ring-wrapped flag is sticky and is published when the writer first begins
 overwriting a chunk, so it is meaningful in both live and finalized images.
@@ -113,8 +115,8 @@ two sides must not be extended as one continuous clock.
 | 12 | 8 | raw counter value used as the first delta base |
 | 20 | 4 | clock generation |
 | 24 | 4 | default track ID |
-| 28 | 2 | used payload bytes |
-| 30 | 2 | data-record count |
+| 28 | 2 | committed payload bits in v4; used payload bytes in v1..v3 |
+| 30 | 2 | data-record count; atomically published with v4 committed bits |
 | 32 | 4 | expanded Perfetto-event count |
 | 36 | 2 | clock-sync record count |
 | 38 | 2 | reserved, zero |
@@ -122,17 +124,134 @@ two sides must not be extended as one continuous clock.
 | 44 | 4 | chunk-header CRC32, or zero when file-header flag bit 2 is clear |
 
 The payload occupies the rest of the 4096-byte chunk. A new chunk resets the
-current timestamp to its base and the current track to its default. A clock-sync
+current timestamp to its base, the current track to its default, and the v4
+codec model to state 2. A clock-sync
 record advances the current timestamp to its counter-interval midpoint.
 Live writers invalidate the first magic byte before reusing a chunk, populate
 the stable header fields and `BCK` suffix, then publish the leading `R` last as
 the chunk commit marker. A crash reader ignores chunks whose magic was not
 completely published.
 When flag bit 2 is set, the chunk-header CRC covers all 48 header bytes with the
-field at offset 44 treated as zero. The payload CRC continues to cover exactly
-the `used payload bytes`; finalized version 2 and 3 readers also require the
+field at offset 44 treated as zero. The payload CRC covers the used payload
+bytes (the ceiling of committed bits divided by eight in v4); finalized version
+2 through 4 readers also require the
 unprotected payload slack to remain zero, making hidden trailing data
 non-canonical without narrowing version 1 compatibility.
+
+## Version 4 static context codec
+
+Version 4 moves expensive packing decisions to an offline corpus-training step.
+The target does not build frequencies, allocate, search a tree, or buffer a
+phrase. It retains one profile pointer and a two-bit model state. A profiled hot
+event performs a constant-time perfect-hash lookup (two 32-bit multiplies, one
+byte displacement read, one key comparison, and one code read), appends a
+maximum-12-bit code, executes the platform publication barrier, and publishes
+one aligned 32-bit chunk cursor.
+
+Profiles are separate from the semantic producer schema. The file header binds
+the canonical profile by SHA-256, while the profile itself binds the producer-
+schema SHA-256. Changing a profile therefore does not renumber an event,
+reorder arguments, or require a producer-schema version bump. The host must
+receive the matching profile to decode a profiled capture. An all-zero profile
+hash selects the built-in literal-only codec and needs no external file.
+
+The canonical external JSON has this shape (codes are already bit-reversed for
+least-significant-bit-first publication):
+
+```json
+{
+  "format": "retrobus-compact-codec-profile-v1",
+  "schema_sha256": "64 lowercase hexadecimal digits",
+  "state_events": [218, 83],
+  "entry_limit": 128,
+  "entries": [
+    {
+      "state": 2,
+      "event_id": 0,
+      "delta": 1,
+      "duration": 1,
+      "code": 0,
+      "code_length": 1,
+      "training_count": 1000
+    }
+  ],
+  "escape_codes": [
+    {"code": 0, "code_length": 1},
+    {"code": 0, "code_length": 1},
+    {"code": 1, "code_length": 1}
+  ]
+}
+```
+
+Entries are sorted by their packed `(state,event,delta,duration)` key. Codes
+within each state, including its escape, must be prefix-free. Canonical JSON
+uses the same sorted-key, compact UTF-8 rules as the producer schema. The CHD
+hash multipliers and tables are derived deterministically and emitted only in
+the C header; they do not change the logical codebook or its profile hash.
+
+The current profile has three states derived from the preceding data event:
+
+- state 0 when that event ID equals the profile's first state event;
+- state 1 when it equals the second state event;
+- state 2 otherwise, and at the beginning of every chunk.
+
+Each profile entry is a zero-stored-argument, same-track completed slice tuple
+`(state, event ID, delta, duration)`, with event ID, delta, and duration limited
+to one byte. Codes are canonical, prefix-free Huffman codes written least-
+significant bit first and limited to 12 bits. Each state also has an explicit
+escape code. Supported profile capacities are 128 entries (128 hash slots and
+64 displacement bytes) and 247 entries (256 slots and 128 displacement bytes).
+Keys occupy four bytes and packed code information two bytes per slot, so the
+lookup arrays occupy 832 and 1664 bytes respectively. The ARM descriptor adds
+104 bytes for both SHA-256 values, state IDs, multipliers, pointers, and escape
+codes, for 936/1768 bytes total. They are `const` and may reside entirely in
+ROM.
+
+When state IDs are not supplied explicitly, the reference trainer takes the 12
+most frequent semantic event IDs (descending frequency, semantic ID tie-break),
+evaluates all 66 unordered pairs, and chooses the first pair with minimum
+estimated length-limited Huffman prefix cost. This bounded score excludes
+literal bodies and the two literal-kind bits below; it is not a claim of global
+entropy or implemented-wire optimality.
+
+After an escape, a two-bit least-significant-bit-first literal kind follows:
+
+| Kind | Meaning |
+| ---: | --- |
+| `0` | event on the current track |
+| `1` | track-ID ULEB128, then event |
+| `2` | clock synchronization |
+| `3` | reserved |
+
+An event literal contains its v3 deterministic ordinary schema opcode, or
+`0xff` plus semantic event-ID ULEB128 when no direct opcode was supplied,
+followed by timestamp-delta ULEB128, the schema-defined duration, and arguments.
+A clock literal contains the five clock-sync ULEB128 fields. This escape path is
+general and lossless; misses affect density but never prevent a valid event
+shape from being recorded.
+
+Payload bits are appended into the zero-filled chunk. Offsets 28 and 30 form
+one aligned little-endian 32-bit publication word: committed bit count in the
+low half and committed data-record count in the high half. The writer first
+fills every new payload bit without changing an already-committed bit, then
+executes the publication barrier, then stores this word atomically. The buffer
+must consequently be four-byte aligned. Before that store, a reader is bounded
+by the old cursor and returns exactly the preceding logical prefix. After the
+store, every body bit is visible. Clock syncs advance the bit cursor without
+incrementing the data-record half. Chunk invalidation/reuse still publishes
+`RBCK` as one transaction, and finalized CRCs detect arbitrary corruption.
+
+This proves interrupted-write prefix recovery under the existing one-writer,
+stable-snapshot, aligned-store, barrier, and cache-coherence contract. It does
+not make an unfinalized committed payload self-resynchronizing after arbitrary
+bit corruption; the next 4096-byte chunk remains the amortized restart point.
+Slow host decoding explores the per-state prefix code bit by bit and is not a
+target resource constraint.
+
+The 4048-byte payload contains 32,384 bits. A one-bit steady-state tuple can
+therefore approach 32,384 records per chunk; the exact total depends on the
+initial-state code and escapes. Representative trained profiles are measured by
+corpus replay rather than a producer-blind best case.
 
 ## Version 3 semantic commit opcodes
 
@@ -328,7 +447,7 @@ correlation, including cross-generation mapped-time monotonicity, is validated
 on the host so the freestanding recorder does not need multiword arithmetic
 state or code.
 
-In versions 2 and 3, within one generation, the producer must ensure that the
+In versions 2 through 4, within one generation, the producer must ensure that the
 actual time between consecutive serialized observations, every completed-slice
 duration, and every clock-sync bracket is strictly less than half the counter
 range. Writers and readers reject modulo deltas at or above
@@ -422,9 +541,10 @@ argument count, and integer encoding. `fixed64` and `float64` parameters are
 supplied as their exact 64-bit wire bits.
 
 The generator also derives v3 ordinary and specialized opcode constants from
-the schema. That mapping changes only the wire representation selected by
-`RBCTRC3`; semantic IDs, argument order, canonical schema JSON, schema hash, and
-producer schema version are unchanged. A future format that makes opcode
+the schema. V4 reuses ordinary opcodes in its escape literals. That mapping
+changes only the wire representation selected by `RBCTRC3` or `RBCTRC4`;
+semantic IDs, argument order, canonical schema JSON, schema hash, and producer
+schema version are unchanged. A future format that makes opcode
 priority or aliases explicit schema data must change the canonical schema and
 use a corresponding producer-schema version rather than silently reinterpreting
 an existing hash.
@@ -441,6 +561,9 @@ an existing hash.
   writers/tracks and are merged on the host.
 - The writer object, recorder buffer, scope storage, and configuration are
   distinct, non-overlapping caller-owned objects.
+- V4 buffers are four-byte aligned. A codec descriptor and all of its generated
+  arrays are immutable, remain valid for the writer lifetime, and do not overlap
+  mutable writer storage.
 - Kernel scheduling, IRQ, and PM tracing should continue to use native Linux
   tracepoints. Convert and correlate those records rather than putting this
   userspace writer in the kernel.
@@ -451,7 +574,9 @@ Version 1 uses `RBCTRC1\0` and an unframed payload stream. The current reader
 accepts canonical output from the original writer, including arbitrary clock
 generation identifiers and modulo counter gaps that predate the v2 half-range
 contract. Version 2 uses `RBCTRC2\0` and the transactional length/implicit-delta
-frames documented above. New writers emit only version 3. Version 1 crash
+frames documented above. Version 3 uses semantic commit opcodes. New writers
+emit version 4 and the host retains v1, v2, and v3 decoder compatibility.
+Version 1 crash
 recovery remains inherently heuristic because it has neither record frames nor
 a semantic commit opcode; applications needing trustworthy recovery must
-migrate their producer to version 3. The host reader retains v1 and v2 support.
+migrate their producer to version 3 or 4.

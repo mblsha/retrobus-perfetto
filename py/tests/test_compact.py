@@ -306,6 +306,86 @@ def _v3_payload_image(
     return bytes(header + chunk)
 
 
+def _append_lsb_bits(output: bytearray, bit_offset: int, value: int, width: int) -> int:
+    for index in range(width):
+        if value & (1 << index):
+            output[(bit_offset + index) >> 3] |= 1 << ((bit_offset + index) & 7)
+    return bit_offset + width
+
+
+def _v4_literal_payload() -> tuple[bytes, int]:
+    """Encode event 1 as a literal-only v4 slice at delta 0."""
+    payload = bytearray(5)
+    bit_offset = 0
+    bit_offset = _append_lsb_bits(payload, bit_offset, 0, 1)  # escape
+    bit_offset = _append_lsb_bits(payload, bit_offset, 0, 2)  # same-track event
+    for value in (1, 0, 1, 42):  # opcode, delta, duration, argument
+        bit_offset = _append_lsb_bits(payload, bit_offset, value, 8)
+    return bytes(payload), bit_offset
+
+
+def _v4_live_image(
+    schema: CompactSchema,
+    chunk_specs: list[tuple[int, int, bytes, int]],
+) -> bytes:
+    """Build an unfinalized literal-only v4 image for recovery tests."""
+    chunks = bytearray()
+    for sequence, base_timestamp, payload, committed_bits in chunk_specs:
+        chunk = bytearray(compact_module.CHUNK_BYTES)
+        chunk[:4] = b"RBCK"
+        struct.pack_into(
+            "<QQIIHHIHHI",
+            chunk,
+            4,
+            sequence,
+            base_timestamp,
+            0,
+            0,
+            committed_bits,
+            1,
+            2,
+            0,
+            0,
+            0,
+        )
+        chunk[48 : 48 + len(payload)] = payload
+        chunks.extend(chunk)
+
+    header = bytearray(compact_module.FILE_HEADER_BYTES)
+    header[:8] = b"RBCTRC4\0"
+    struct.pack_into(
+        "<HHHHIQQHHII",
+        header,
+        8,
+        4,
+        compact_module.FILE_HEADER_BYTES,
+        compact_module.CHUNK_HEADER_BYTES,
+        0,
+        compact_module.CHUNK_BYTES,
+        1_000_000,
+        1,
+        32,
+        0,
+        schema.producer_id,
+        schema.version,
+    )
+    header[48:80] = schema.sha256
+    struct.pack_into(
+        "<QQQQQQII",
+        header,
+        96,
+        len(chunk_specs),
+        0,
+        0,
+        2 * len(chunk_specs),
+        0,
+        len(header) + len(chunks),
+        0,
+        0,
+    )
+    return bytes(header + chunks)
+
+
 def _event_rows(builder) -> list[tuple[int, int, str, tuple[tuple[str, object], ...]]]:
     trace = perfetto_pb2.Trace()
     trace.ParseFromString(builder.serialize())
@@ -642,6 +722,43 @@ def test_unfinalized_read_recovers_an_interrupted_finalize(
 
     assert not trace.header.finalized
     assert trace.header.retained_records == 8
+
+
+def test_v4_recovery_skips_single_chunk_with_out_of_range_bit_cursor(
+    tmp_path: Path, schema: CompactSchema
+) -> None:
+    payload, _ = _v4_literal_payload()
+    image = _v4_live_image(schema, [(0, 100, payload, 0xFFFF)])
+    path = tmp_path / "v4-oversized-single-chunk.rbct"
+    path.write_bytes(image)
+
+    recovered = read_compact_trace(path, schema, allow_unfinalized=True)
+    assert recovered.records == ()
+    assert recovered.clock_syncs == ()
+
+
+def test_v4_recovery_never_crosses_a_malformed_chunk_boundary(
+    tmp_path: Path, schema: CompactSchema
+) -> None:
+    payload, committed_bits = _v4_literal_payload()
+    image = _v4_live_image(
+        schema,
+        [
+            (0, 100, payload, committed_bits),
+            (1, 200, payload, 0xFFFF),
+            (2, 300, payload, committed_bits),
+        ],
+    )
+    path = tmp_path / "v4-oversized-middle-chunk.rbct"
+    path.write_bytes(image)
+
+    recovered = read_compact_trace(path, schema, allow_unfinalized=True)
+
+    # Dropping sequence 1 creates a recovery gap, so sequence 2 cannot be
+    # interpreted as a continuation. Most importantly, sequence 1's cursor
+    # never turns the following physical chunk into payload bytes.
+    assert [record.event.id for record in recovered.records] == [1]
+    assert recovered.records[0].raw_timestamp == 100
 
 
 def test_varints_are_canonical_unsigned_64_bit() -> None:
@@ -1196,9 +1313,13 @@ def test_finalized_used_chunk_payload_slack_must_be_zero(
     tmp_path: Path, schema: CompactSchema
 ) -> None:
     image = bytearray(_rbct_image(schema))
-    used = struct.unpack_from("<H", image, compact_module.FILE_HEADER_BYTES + 28)[0]
+    used = struct.unpack_from(
+        "<H", image, compact_module.LEGACY_FILE_HEADER_BYTES + 28
+    )[0]
     image[
-        compact_module.FILE_HEADER_BYTES + compact_module.CHUNK_HEADER_BYTES + used
+        compact_module.LEGACY_FILE_HEADER_BYTES
+        + compact_module.CHUNK_HEADER_BYTES
+        + used
     ] = 0xA5
     path = tmp_path / "dirty-payload-slack.rbct"
     path.write_bytes(image)
