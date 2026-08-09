@@ -113,10 +113,12 @@ cmake --build build/compact-c
 ```
 
 The C implementation is C99. Its CMake target applies freestanding, no-builtin,
-and no-stack-protector options on GCC and Clang, and omits security-cookie and
-default-runtime-library directives under MSVC, so the resulting target library
-has no implicit runtime dependency. Equivalent flags are required when compiling
-the source directly. Its event path is single-producer; use separate writers for
-concurrent producers and merge reconstructed traces on the host.
+and no-stack-protector options on GCC and Clang, and disables security cookies and
+runtime-backed compiler intrinsics while omitting default-runtime-library
+directives under MSVC, so the resulting target library has no implicit runtime
+dependency. Equivalent flags are required when compiling the source directly.
+Its event path is
+single-producer; use separate writers for concurrent producers and merge
+reconstructed traces on the host.
 Cross-generation rational-clock consistency is intentionally checked by the
 host reader rather than with multiword arithmetic in the target recorder.

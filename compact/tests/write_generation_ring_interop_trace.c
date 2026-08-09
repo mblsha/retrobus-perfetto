@@ -28,9 +28,9 @@ int main(int argc, char** argv) {
     return 3;
   }
   for (generation = 7u; generation <= 10u; ++generation) {
-    if (rbct_writer_clock_sync(
-            &writer, generation, 0u, 2u,
-            1000u + (uint64_t)(generation - 7u) * 1000u, 0u) != RBCT_OK) {
+    if (rbct_writer_clock_sync(&writer, generation, 0u, 2u,
+                               1000u + (uint64_t)(generation - 7u) * 1000u,
+                               0u) != RBCT_OK) {
       return 4;
     }
   }
