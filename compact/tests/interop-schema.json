@@ -69,6 +69,13 @@
       ]
     },
     {
+      "id": 21,
+      "name": "heartbeat",
+      "category": "runtime",
+      "kind": "instant",
+      "arguments": []
+    },
+    {
       "id": 300,
       "name": "address",
       "category": "runtime",

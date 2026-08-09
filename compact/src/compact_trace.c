@@ -20,7 +20,21 @@
 #define RBCT_FLAG_RING_WRAPPED 0x0002u
 #define RBCT_FLAG_CHUNK_HEADER_CRC 0x0004u
 #define RBCT_NO_CHUNK ((size_t)-1)
-#define RBCT_SCRATCH_BYTES 128u
+#define RBCT_STATE_INITIALIZED 0x01u
+#define RBCT_STATE_FINALIZED 0x02u
+#define RBCT_STATE_GENERATION_HAS_RECORD 0x04u
+#define RBCT_STATE_GENERATION_HAS_SYNC 0x08u
+#define RBCT_STATE_SYNC_ADVANCED 0x10u
+/*
+ * Maximum event body: track and event controls plus uint32 IDs (12 bytes),
+ * half-range-bounded timestamp delta and duration (18), and four uint64
+ * ULEB128 arguments (40).
+ */
+#define RBCT_FRAME_DELTA_ZERO_BASE RBCT_MAX_RECORD_BYTES
+#define RBCT_FRAME_DELTA_ONE_BASE (2u * RBCT_MAX_RECORD_BYTES)
+#define RBCT_FRAME_INLINE_ZERO_BASE (3u * RBCT_MAX_RECORD_BYTES)
+#define RBCT_FRAME_INLINE_ONE_BASE (RBCT_FRAME_INLINE_ZERO_BASE + 22u)
+#define RBCT_INLINE_EVENT_ID_MAX 21u
 
 #ifndef RBCT_PLATFORM_PUBLISH_BARRIER
 #if defined(_MSC_VER) && defined(_M_ARM)
@@ -40,8 +54,7 @@
 #define RBCT_PLATFORM_PUBLISH_BARRIER() \
   __asm__ __volatile__("fence w,w" ::: "memory")
 #elif defined(__GNUC__) || defined(__clang__)
-#define RBCT_PLATFORM_PUBLISH_BARRIER() \
-  __asm__ __volatile__("" ::: "memory")
+#define RBCT_PLATFORM_PUBLISH_BARRIER() __asm__ __volatile__("" ::: "memory")
 #else
 #define RBCT_PLATFORM_PUBLISH_BARRIER() ((void)0)
 #endif
@@ -133,98 +146,11 @@ static uint32_t rbct_final_header_crc32(const uint8_t* source,
   return ~crc;
 }
 
-typedef struct rbct_u192 {
-  uint64_t low;
-  uint64_t middle;
-  uint64_t high;
-} rbct_u192_t;
-
-static rbct_u192_t rbct_mul_u64_u64(uint64_t left, uint64_t right) {
-  const uint64_t mask = UINT64_C(0xffffffff);
-  const uint64_t left_low = left & mask;
-  const uint64_t left_high = left >> 32u;
-  const uint64_t right_low = right & mask;
-  const uint64_t right_high = right >> 32u;
-  const uint64_t low_low = left_low * right_low;
-  const uint64_t low_high = left_low * right_high;
-  const uint64_t high_low = left_high * right_low;
-  const uint64_t high_high = left_high * right_high;
-  const uint64_t carry =
-      (low_low >> 32u) + (low_high & mask) + (high_low & mask);
-  rbct_u192_t result;
-  result.low = (low_low & mask) | (carry << 32u);
-  result.middle = high_high + (low_high >> 32u) + (high_low >> 32u) +
-                  (carry >> 32u);
-  result.high = 0u;
-  return result;
-}
-
-static uint64_t rbct_mul_limb_u32(uint64_t value,
-                                  uint32_t multiplier,
-                                  uint64_t add,
-                                  uint64_t* result) {
-  const uint64_t low =
-      (value & UINT64_C(0xffffffff)) * multiplier + add;
-  const uint64_t high = (value >> 32u) * multiplier + (low >> 32u);
-  *result = (low & UINT64_C(0xffffffff)) | (high << 32u);
-  return high >> 32u;
-}
-
-static rbct_u192_t rbct_mul_u192_u32(rbct_u192_t value,
-                                     uint32_t multiplier) {
-  uint64_t carry;
-  carry = rbct_mul_limb_u32(value.low, multiplier, 0u, &value.low);
-  carry =
-      rbct_mul_limb_u32(value.middle, multiplier, carry, &value.middle);
-  (void)rbct_mul_limb_u32(value.high, multiplier, carry, &value.high);
-  return value;
-}
-
-static void rbct_add_u64(rbct_u192_t* value, uint64_t add) {
-  const uint64_t previous_low = value->low;
-  value->low += add;
-  if (value->low < previous_low) {
-    ++value->middle;
-    if (value->middle == 0u) {
-      ++value->high;
-    }
-  }
-}
-
-static int rbct_less_u192(rbct_u192_t left, rbct_u192_t right) {
-  if (left.high != right.high) {
-    return left.high < right.high;
-  }
-  if (left.middle != right.middle) {
-    return left.middle < right.middle;
-  }
-  return left.low < right.low;
-}
-
-static int rbct_reference_covers_ticks(const rbct_writer_t* writer,
-                                       uint64_t ticks,
-                                       uint64_t reference_delta_ns) {
-  rbct_u192_t tick_nanoseconds =
-      rbct_mul_u64_u64(ticks, writer->clock_rate_denominator);
-  rbct_u192_t reference_limit =
-      rbct_mul_u64_u64(reference_delta_ns, writer->clock_rate_numerator);
-  tick_nanoseconds =
-      rbct_mul_u192_u32(tick_nanoseconds, UINT32_C(1000000000));
-  rbct_add_u64(&reference_limit,
-               (writer->clock_rate_numerator >> 1u) +
-                   (writer->clock_rate_numerator & 1u));
-  return rbct_less_u192(tick_nanoseconds, reference_limit);
-}
-
-static int rbct_append_varint(uint8_t* destination,
-                              size_t capacity,
-                              size_t* size,
-                              uint64_t value) {
+static void rbct_append_varint(uint8_t* destination,
+                               size_t* size,
+                               uint64_t value) {
   do {
     uint8_t byte;
-    if (*size >= capacity) {
-      return 0;
-    }
     byte = (uint8_t)(value & 0x7fu);
     value >>= 7u;
     if (value != 0u) {
@@ -232,21 +158,15 @@ static int rbct_append_varint(uint8_t* destination,
     }
     destination[(*size)++] = byte;
   } while (value != 0u);
-  return 1;
 }
 
-static int rbct_append_fixed64(uint8_t* destination,
-                               size_t capacity,
-                               size_t* size,
-                               uint64_t value) {
+static void rbct_append_fixed64(uint8_t* destination,
+                                size_t* size,
+                                uint64_t value) {
   size_t index;
-  if (*size > capacity || capacity - *size < 8u) {
-    return 0;
-  }
   for (index = 0; index < 8u; ++index) {
     destination[(*size)++] = (uint8_t)((value >> (index * 8u)) & 0xffu);
   }
-  return 1;
 }
 
 static size_t rbct_framed_size(size_t encoded_size) {
@@ -256,23 +176,20 @@ static size_t rbct_framed_size(size_t encoded_size) {
 static void rbct_commit_record(uint8_t* chunk,
                                uint16_t used,
                                const uint8_t* encoded,
-                               size_t encoded_size) {
+                               size_t encoded_size,
+                               uint8_t marker_base) {
   uint8_t* frame = chunk + RBCT_CHUNK_HEADER_BYTES + used;
-  const uint16_t length = (uint16_t)encoded_size;
 
   /*
-   * The length is the publication marker. The complement detects a torn
-   * marker. RBCT_PLATFORM_PUBLISH_BARRIER keeps the body and complement ahead
-   * of it for the selected target. Platforms without a built-in hardware
+   * The one-byte frame marker publishes the record. All supported targets
+   * publish a byte atomically. RBCT_PLATFORM_PUBLISH_BARRIER keeps the body
+   * ahead of it for the selected target. Platforms without a built-in hardware
    * barrier, or with non-coherent persistence, must override that macro or
    * quiesce and flush the completed buffer according to platform policy.
    */
   rbct_copy(frame + RBCT_RECORD_FRAME_BYTES, encoded, encoded_size);
-  rbct_put_u16(frame, 0u, 0u);
-  rbct_put_u16(frame, 2u, (uint16_t)~length);
   RBCT_PLATFORM_PUBLISH_BARRIER();
-  rbct_put_u16(frame, 0u, length);
-  RBCT_PLATFORM_PUBLISH_BARRIER();
+  frame[0] = (uint8_t)(marker_base + encoded_size);
 }
 
 static uint64_t rbct_clock_mask(const rbct_writer_t* writer) {
@@ -391,74 +308,57 @@ static void rbct_start_chunk(rbct_writer_t* writer,
   chunk[3] = RBCT_CHUNK_MAGIC_3;
   RBCT_PLATFORM_PUBLISH_BARRIER();
   chunk[0] = RBCT_CHUNK_MAGIC_0;
-  RBCT_PLATFORM_PUBLISH_BARRIER();
   writer->current_chunk = next;
   writer->current_generation = generation;
   writer->current_timestamp = base_timestamp;
   writer->current_track = writer->default_track;
 }
 
-static int rbct_encode_event(const rbct_writer_t* writer,
-                             uint8_t* encoded,
-                             size_t capacity,
-                             size_t* encoded_size,
-                             uint64_t timestamp,
-                             uint32_t track_id,
-                             uint32_t event_id,
-                             int has_duration,
-                             uint64_t duration,
-                             const rbct_argument_t* arguments,
-                             size_t argument_count) {
+static uint8_t rbct_encode_event(const rbct_writer_t* writer,
+                                 uint8_t* encoded,
+                                 size_t* encoded_size,
+                                 uint64_t timestamp_delta,
+                                 uint32_t track_id,
+                                 uint32_t event_id,
+                                 int has_duration,
+                                 uint64_t duration,
+                                 const rbct_argument_t* arguments,
+                                 size_t argument_count) {
   size_t index;
   *encoded_size = 0u;
+  if (track_id == writer->current_track &&
+      event_id <= RBCT_INLINE_EVENT_ID_MAX && !has_duration &&
+      argument_count == 0u && timestamp_delta <= 1u) {
+    return (uint8_t)((timestamp_delta == 0u ? RBCT_FRAME_INLINE_ZERO_BASE
+                                            : RBCT_FRAME_INLINE_ONE_BASE) +
+                     event_id + 1u);
+  }
   if (track_id != writer->current_track) {
-    if (*encoded_size >= capacity) {
-      return 0;
-    }
     encoded[(*encoded_size)++] = RBCT_CONTROL_TRACK;
-    if (!rbct_append_varint(encoded, capacity, encoded_size, track_id)) {
-      return 0;
-    }
+    rbct_append_varint(encoded, encoded_size, track_id);
   }
   if (event_id <= RBCT_DIRECT_EVENT_ID_MAX) {
-    if (*encoded_size >= capacity) {
-      return 0;
-    }
     encoded[(*encoded_size)++] = (uint8_t)event_id;
   } else {
-    if (*encoded_size >= capacity) {
-      return 0;
-    }
     encoded[(*encoded_size)++] = RBCT_CONTROL_EXTENDED_EVENT;
-    if (!rbct_append_varint(encoded, capacity, encoded_size, event_id)) {
-      return 0;
-    }
+    rbct_append_varint(encoded, encoded_size, event_id);
   }
-  if (!rbct_append_varint(
-          encoded, capacity, encoded_size,
-          rbct_clock_delta(writer, timestamp, writer->current_timestamp))) {
-    return 0;
+  if (timestamp_delta > 1u) {
+    rbct_append_varint(encoded, encoded_size, timestamp_delta);
   }
-  if (has_duration &&
-      !rbct_append_varint(encoded, capacity, encoded_size, duration)) {
-    return 0;
+  if (has_duration) {
+    rbct_append_varint(encoded, encoded_size, duration);
   }
   for (index = 0; index < argument_count; ++index) {
     if (arguments[index].encoding == RBCT_ARGUMENT_ULEB128) {
-      if (!rbct_append_varint(encoded, capacity, encoded_size,
-                              arguments[index].bits)) {
-        return 0;
-      }
-    } else if (arguments[index].encoding == RBCT_ARGUMENT_FIXED64) {
-      if (!rbct_append_fixed64(encoded, capacity, encoded_size,
-                               arguments[index].bits)) {
-        return 0;
-      }
+      rbct_append_varint(encoded, encoded_size, arguments[index].bits);
     } else {
-      return 0;
+      rbct_append_fixed64(encoded, encoded_size, arguments[index].bits);
     }
   }
-  return 1;
+  return timestamp_delta <= 1u
+             ? (uint8_t)((timestamp_delta + 1u) * RBCT_MAX_RECORD_BYTES)
+             : 0u;
 }
 
 static rbct_status_t rbct_append_event(rbct_writer_t* writer,
@@ -470,83 +370,61 @@ static rbct_status_t rbct_append_event(rbct_writer_t* writer,
                                        const rbct_argument_t* arguments,
                                        size_t argument_count,
                                        uint32_t expanded_events) {
-  uint8_t encoded[RBCT_SCRATCH_BYTES];
+  uint8_t encoded[RBCT_MAX_RECORD_BYTES];
   size_t encoded_size = 0u;
   uint8_t* chunk;
   uint16_t used;
-  uint64_t serialized_delta = 0u;
-  int span_overflow = 0;
+  uint64_t observation_delta = 0u;
+  uint64_t wire_delta;
+  uint8_t marker_base;
 
   if (writer == NULL || !rbct_writer_enabled(writer)) {
     return RBCT_INVALID_STATE;
   }
   if (!rbct_arguments_valid(arguments, argument_count) ||
       !rbct_clock_sample_valid(writer, timestamp) ||
-      (writer->has_observation != 0u &&
-       !rbct_clock_delta_valid(writer, timestamp, writer->last_observation)) ||
-      (writer->has_serialized_observation != 0u &&
-       !rbct_clock_delta_valid(writer, timestamp,
-                               writer->last_serialized_observation)) ||
+      (writer->current_chunk != RBCT_NO_CHUNK &&
+       !rbct_clock_delta_valid(writer, timestamp, writer->current_timestamp)) ||
       (has_duration &&
        !rbct_clock_delta_valid(writer, timestamp, timestamp - duration))) {
     ++writer->dropped_records;
     return RBCT_INVALID_ARGUMENT;
   }
-  if (writer->has_serialized_observation != 0u) {
-    serialized_delta = rbct_clock_delta(
-        writer, timestamp, writer->last_serialized_observation);
-  }
-  if (writer->current_generation_has_sync != 0u &&
-      serialized_delta > UINT64_MAX - writer->ticks_since_last_sync) {
-    span_overflow = 1;
+  if (writer->current_chunk != RBCT_NO_CHUNK) {
+    observation_delta =
+        rbct_clock_delta(writer, timestamp, writer->current_timestamp);
   }
   if (writer->current_chunk == RBCT_NO_CHUNK) {
     rbct_start_chunk(writer, writer->current_generation, timestamp);
   }
-  if (!rbct_encode_event(writer, encoded, sizeof(encoded), &encoded_size,
-                         timestamp, track_id, event_id, has_duration, duration,
-                         arguments, argument_count)) {
-    ++writer->dropped_records;
-    return RBCT_RECORD_TOO_LARGE;
-  }
+  wire_delta = rbct_clock_delta(writer, timestamp, writer->current_timestamp);
+  marker_base = rbct_encode_event(writer, encoded, &encoded_size, wire_delta,
+                                  track_id, event_id, has_duration, duration,
+                                  arguments, argument_count);
 
   chunk = rbct_chunk(writer, writer->current_chunk);
   used = rbct_get_u16(chunk, 28u);
   if (rbct_framed_size(encoded_size) >
       RBCT_CHUNK_BYTES - RBCT_CHUNK_HEADER_BYTES - used) {
     rbct_start_chunk(writer, writer->current_generation, timestamp);
-    if (!rbct_encode_event(writer, encoded, sizeof(encoded), &encoded_size,
-                           timestamp, track_id, event_id, has_duration,
-                           duration, arguments, argument_count)) {
-      ++writer->dropped_records;
-      return RBCT_RECORD_TOO_LARGE;
-    }
+    wire_delta = 0u;
+    marker_base = rbct_encode_event(writer, encoded, &encoded_size, wire_delta,
+                                    track_id, event_id, has_duration, duration,
+                                    arguments, argument_count);
     chunk = rbct_chunk(writer, writer->current_chunk);
     used = 0u;
   }
-  if (rbct_framed_size(encoded_size) >
-      RBCT_CHUNK_BYTES - RBCT_CHUNK_HEADER_BYTES - used) {
-    ++writer->dropped_records;
-    return RBCT_RECORD_TOO_LARGE;
-  }
 
-  rbct_commit_record(chunk, used, encoded, encoded_size);
+  rbct_commit_record(chunk, used, encoded, encoded_size, marker_base);
   rbct_put_u16(chunk, 28u, (uint16_t)(used + rbct_framed_size(encoded_size)));
   rbct_put_u16(chunk, 30u, (uint16_t)(rbct_get_u16(chunk, 30u) + 1u));
   rbct_put_u32(chunk, 32u, rbct_get_u32(chunk, 32u) + expanded_events);
   writer->current_timestamp = timestamp;
-  writer->last_observation = timestamp;
-  writer->last_serialized_observation = timestamp;
-  writer->has_observation = 1u;
-  writer->has_serialized_observation = 1u;
-  if (writer->current_generation_has_sync != 0u) {
-    if (span_overflow) {
-      writer->sync_span_overflow = 1u;
-    } else if (writer->sync_span_overflow == 0u) {
-      writer->ticks_since_last_sync += serialized_delta;
-    }
+  writer->state |= RBCT_STATE_GENERATION_HAS_RECORD;
+  if ((writer->state & RBCT_STATE_GENERATION_HAS_SYNC) != 0u &&
+      observation_delta != 0u) {
+    writer->state |= RBCT_STATE_SYNC_ADVANCED;
   }
-  writer->current_generation_has_record = 1u;
   writer->current_track = track_id;
   ++writer->total_records;
   writer->total_events += expanded_events;
@@ -602,15 +480,13 @@ rbct_status_t rbct_writer_init(rbct_writer_t* writer,
   writer->buffer_bytes = usable_bytes;
   writer->chunk_count = chunk_count;
   writer->current_chunk = RBCT_NO_CHUNK;
-  writer->clock_rate_numerator = config->clock_rate_numerator;
-  writer->clock_rate_denominator = config->clock_rate_denominator;
   writer->current_generation = config->initial_clock_generation;
   writer->current_track = config->default_track_id;
   writer->default_track = config->default_track_id;
   writer->clock_width_bits = config->clock_width_bits;
   writer->scopes = scope_storage;
   writer->scope_capacity = scope_capacity;
-  writer->initialized = 1u;
+  writer->state = RBCT_STATE_INITIALIZED;
 
   header = writer->buffer;
   header[0] = (uint8_t)'R';
@@ -639,7 +515,8 @@ rbct_status_t rbct_writer_init(rbct_writer_t* writer,
 }
 
 int rbct_writer_enabled(const rbct_writer_t* writer) {
-  return writer != NULL && writer->initialized != 0u && writer->finalized == 0u;
+  return writer != NULL && (writer->state & RBCT_STATE_INITIALIZED) != 0u &&
+         (writer->state & RBCT_STATE_FINALIZED) == 0u;
 }
 
 rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
@@ -655,8 +532,6 @@ rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
   }
   if (!rbct_arguments_valid(arguments, argument_count) ||
       !rbct_clock_sample_valid(writer, timestamp) ||
-      (writer->has_observation != 0u &&
-       !rbct_clock_delta_valid(writer, timestamp, writer->last_observation)) ||
       writer->scope_depth == writer->scope_capacity) {
     ++writer->dropped_records;
     return RBCT_INVALID_ARGUMENT;
@@ -670,8 +545,6 @@ rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
     scope->arguments[index].bits = arguments[index].bits;
     scope->arguments[index].encoding = arguments[index].encoding;
   }
-  writer->last_observation = timestamp;
-  writer->has_observation = 1u;
   return RBCT_OK;
 }
 
@@ -725,11 +598,12 @@ rbct_status_t rbct_writer_clock_sync(rbct_writer_t* writer,
                                      uint64_t counter_after,
                                      uint64_t reference_timestamp_ns,
                                      uint64_t uncertainty_ns) {
-  uint8_t encoded[RBCT_SCRATCH_BYTES];
+  uint8_t encoded[RBCT_MAX_RECORD_BYTES];
   size_t encoded_size = 0u;
   uint8_t* chunk;
   uint16_t used;
   uint64_t midpoint;
+  uint64_t serialized_delta = 0u;
   int generation_transition;
   if (writer == NULL || !rbct_writer_enabled(writer)) {
     return RBCT_INVALID_STATE;
@@ -738,8 +612,7 @@ rbct_status_t rbct_writer_clock_sync(rbct_writer_t* writer,
   if (generation_transition && writer->scope_depth != 0u) {
     return RBCT_INVALID_STATE;
   }
-  if (generation_transition &&
-      generation != writer->current_generation + 1u) {
+  if (generation_transition && generation != writer->current_generation + 1u) {
     return RBCT_INVALID_ARGUMENT;
   }
   if (!rbct_clock_sample_valid(writer, counter_before) ||
@@ -750,52 +623,34 @@ rbct_status_t rbct_writer_clock_sync(rbct_writer_t* writer,
   midpoint = (counter_before +
               rbct_clock_delta(writer, counter_after, counter_before) / 2u) &
              rbct_clock_mask(writer);
-  if (writer->current_generation_has_record != 0u &&
-      writer->current_generation_has_sync == 0u) {
+  if ((writer->state & RBCT_STATE_GENERATION_HAS_RECORD) != 0u &&
+      (writer->state & RBCT_STATE_GENERATION_HAS_SYNC) == 0u) {
     return RBCT_INVALID_ARGUMENT;
   }
-  if (writer->has_sync != 0u &&
-      (reference_timestamp_ns < writer->last_sync_reference_ns ||
-       (writer->last_sync_generation == generation &&
-        midpoint == writer->last_sync_midpoint))) {
-    return RBCT_INVALID_ARGUMENT;
-  }
-  if (generation_transition && writer->current_generation_has_record != 0u &&
-      (writer->sync_span_overflow != 0u ||
-       !rbct_reference_covers_ticks(
-           writer, writer->ticks_since_last_sync,
-           reference_timestamp_ns - writer->last_sync_reference_ns))) {
-    return RBCT_INVALID_ARGUMENT;
-  }
-  if (writer->has_observation != 0u &&
-      writer->current_generation == generation &&
-      !rbct_clock_delta_valid(writer, midpoint, writer->last_observation)) {
-    return RBCT_INVALID_ARGUMENT;
-  }
-  if (writer->has_serialized_observation != 0u && !generation_transition &&
-      !rbct_clock_delta_valid(writer, midpoint,
-                              writer->last_serialized_observation)) {
-    return RBCT_INVALID_ARGUMENT;
+  if (!generation_transition && writer->current_chunk != RBCT_NO_CHUNK) {
+    if (!rbct_clock_delta_valid(writer, midpoint, writer->current_timestamp)) {
+      return RBCT_INVALID_ARGUMENT;
+    }
+    serialized_delta =
+        rbct_clock_delta(writer, midpoint, writer->current_timestamp);
+    if ((writer->state & RBCT_STATE_GENERATION_HAS_SYNC) != 0u &&
+        (writer->state & RBCT_STATE_SYNC_ADVANCED) == 0u &&
+        serialized_delta == 0u) {
+      return RBCT_INVALID_ARGUMENT;
+    }
   }
   encoded[encoded_size++] = RBCT_CONTROL_CLOCK_SYNC;
-  if (!rbct_append_varint(encoded, sizeof(encoded), &encoded_size,
-                          generation) ||
-      !rbct_append_varint(encoded, sizeof(encoded), &encoded_size,
-                          counter_before) ||
-      !rbct_append_varint(encoded, sizeof(encoded), &encoded_size,
-                          counter_after) ||
-      !rbct_append_varint(encoded, sizeof(encoded), &encoded_size,
-                          reference_timestamp_ns) ||
-      !rbct_append_varint(encoded, sizeof(encoded), &encoded_size,
-                          uncertainty_ns)) {
-    return RBCT_RECORD_TOO_LARGE;
-  }
+  rbct_append_varint(encoded, &encoded_size, generation);
+  rbct_append_varint(encoded, &encoded_size, counter_before);
+  rbct_append_varint(encoded, &encoded_size, counter_after);
+  rbct_append_varint(encoded, &encoded_size, reference_timestamp_ns);
+  rbct_append_varint(encoded, &encoded_size, uncertainty_ns);
   if (writer->current_chunk == RBCT_NO_CHUNK || generation_transition) {
     rbct_start_chunk(writer, generation, counter_before);
     if (generation_transition) {
-      writer->current_generation_has_record = 0u;
-      writer->current_generation_has_sync = 0u;
-      writer->sync_span_overflow = 0u;
+      writer->state &=
+          (uint8_t)~(RBCT_STATE_GENERATION_HAS_RECORD |
+                     RBCT_STATE_GENERATION_HAS_SYNC | RBCT_STATE_SYNC_ADVANCED);
     }
   }
   chunk = rbct_chunk(writer, writer->current_chunk);
@@ -806,20 +661,12 @@ rbct_status_t rbct_writer_clock_sync(rbct_writer_t* writer,
     chunk = rbct_chunk(writer, writer->current_chunk);
     used = 0u;
   }
-  rbct_commit_record(chunk, used, encoded, encoded_size);
+  rbct_commit_record(chunk, used, encoded, encoded_size, 0u);
   rbct_put_u16(chunk, 28u, (uint16_t)(used + rbct_framed_size(encoded_size)));
   rbct_put_u16(chunk, 36u, (uint16_t)(rbct_get_u16(chunk, 36u) + 1u));
-  writer->last_observation = midpoint;
-  writer->last_serialized_observation = midpoint;
-  writer->has_observation = 1u;
-  writer->has_serialized_observation = 1u;
-  writer->last_sync_midpoint = midpoint;
-  writer->last_sync_reference_ns = reference_timestamp_ns;
-  writer->last_sync_generation = generation;
-  writer->has_sync = 1u;
-  writer->current_generation_has_sync = 1u;
-  writer->ticks_since_last_sync = 0u;
-  writer->sync_span_overflow = 0u;
+  writer->current_timestamp = midpoint;
+  writer->state |= RBCT_STATE_GENERATION_HAS_SYNC;
+  writer->state &= (uint8_t)~RBCT_STATE_SYNC_ADVANCED;
   return RBCT_OK;
 }
 
@@ -854,12 +701,10 @@ rbct_status_t rbct_writer_finalize(rbct_writer_t* writer) {
                (uint16_t)(flags & (uint16_t)~RBCT_FLAG_FINALIZED));
   rbct_put_u32(writer->buffer, 152u, 0u);
   header_crc = rbct_final_header_crc32(writer->buffer, flags);
-  RBCT_PLATFORM_PUBLISH_BARRIER();
   rbct_put_u32(writer->buffer, 152u, header_crc);
   RBCT_PLATFORM_PUBLISH_BARRIER();
   writer->buffer[38] = (uint8_t)(flags & 0xffu);
-  RBCT_PLATFORM_PUBLISH_BARRIER();
-  writer->finalized = 1u;
+  writer->state |= RBCT_STATE_FINALIZED;
   return RBCT_OK;
 }
 

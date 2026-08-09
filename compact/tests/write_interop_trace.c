@@ -30,6 +30,9 @@ int main(int argc, char** argv) {
   if (rbct_writer_clock_sync(&writer, 7, 100, 102, 1000000, 300) != RBCT_OK) {
     return 4;
   }
+  if (INTEROP_TRACE_EMIT_HEARTBEAT(&writer, 102, 0) != RBCT_OK) {
+    return 17;
+  }
   if (INTEROP_TRACE_BEGIN_WORK(&writer, 105, 1, 1) != RBCT_INVALID_ARGUMENT) {
     return 14;
   }

@@ -66,13 +66,23 @@ The buffer size must equal `RBCT_FILE_HEADER_BYTES` plus an integral number of
 buffer, scope storage, and configuration must not overlap.
 
 New captures use framed format v2. Each record body is copied before its
-length/complement publication marker, so best-effort crash recovery does not
+one-byte publication marker, so best-effort crash recovery does not
 mistake zero-filled slack for event ID zero. ARMv7+, AArch64, RISC-V, and x86
 receive a built-in store-publication barrier. Other targets, including ARMv5,
 must define `RBCT_PLATFORM_PUBLISH_BARRIER()` when a snapshot can race the
 writer, or quiesce and synchronize the writer before copying. Platforms whose
 snapshot is not coherent with ordinary stores must also supply the appropriate
 persistence or cache-flush policy.
+
+The marker also carries timestamp deltas zero and one. For event IDs `0..21`, a
+same-track event with one of those deltas and no duration or stored arguments is
+encoded entirely in that marker. A 4096-byte chunk therefore retains 4048
+minimal events—twice the density of the unframed v1 stream. Other delta-zero and
+delta-one events omit the timestamp field but retain a one-byte frame around
+their body. The resource regression test locks in the 4048-event capacity and
+caps the writer object at 136 bytes on 64-bit targets and 112 bytes on 32-bit
+targets; CI also caps the ARMv5TE `-Os` text and reported function-stack
+footprints.
 
 Chunk reuse invalidates the leading magic byte before changing any retained
 contents, then publishes that byte last after the replacement header is ready.
@@ -108,3 +118,5 @@ default-runtime-library directives under MSVC, so the resulting target library
 has no implicit runtime dependency. Equivalent flags are required when compiling
 the source directly. Its event path is single-producer; use separate writers for
 concurrent producers and merge reconstructed traces on the host.
+Cross-generation rational-clock consistency is intentionally checked by the
+host reader rather than with multiword arithmetic in the target recorder.
