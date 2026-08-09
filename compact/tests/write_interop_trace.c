@@ -8,7 +8,6 @@ int main(int argc, char** argv) {
   rbct_scope_t scopes[4];
   rbct_writer_t writer;
   rbct_config_t config = {0};
-  rbct_argument_t argument;
   FILE* output;
   unsigned index;
 
@@ -31,27 +30,31 @@ int main(int argc, char** argv) {
   if (rbct_writer_clock_sync(&writer, 7, 100, 102, 1000000, 300) != RBCT_OK) {
     return 4;
   }
-  argument = rbct_argument_u64(42);
-  if (rbct_writer_begin(&writer, 110, 0, INTEROP_TRACE_EVENT_WORK, &argument,
-                        1) != RBCT_OK) {
+  if (INTEROP_TRACE_BEGIN_WORK(&writer, 105, 1, 1) != RBCT_INVALID_ARGUMENT) {
+    return 14;
+  }
+  if (INTEROP_TRACE_EMIT_BYTES(&writer, 106, 1, UINT64_MAX) !=
+      RBCT_INVALID_ARGUMENT) {
+    return 15;
+  }
+  if (INTEROP_TRACE_EMIT_LOAD(&writer, 107, 1, UINT64_C(0x7ff0000000000000)) !=
+      RBCT_INVALID_ARGUMENT) {
+    return 16;
+  }
+  if (INTEROP_TRACE_BEGIN_WORK(&writer, 110, 0, 42) != RBCT_OK) {
     return 5;
   }
-  argument = rbct_argument_i64(-7);
-  if (rbct_writer_emit(&writer, 120, 0, INTEROP_TRACE_EVENT_FAULT, &argument,
-                       1) != RBCT_OK) {
+  if (INTEROP_TRACE_EMIT_FAULT(&writer, 120, 0, -7) != RBCT_OK) {
     return 6;
   }
   if (rbct_writer_end(&writer, 150) != RBCT_OK) {
     return 7;
   }
-  argument = rbct_argument_u64(99);
-  if (rbct_writer_emit(&writer, 160, 1, INTEROP_TRACE_EVENT_BYTES, &argument,
-                       1) != RBCT_OK) {
+  if (INTEROP_TRACE_EMIT_BYTES(&writer, 160, 1, 99) != RBCT_OK) {
     return 8;
   }
-  argument = rbct_argument_fixed64(UINT64_C(0xdeadbeef12345678));
-  if (rbct_writer_emit(&writer, 170, 0, INTEROP_TRACE_EVENT_ADDRESS, &argument,
-                       1) != RBCT_OK) {
+  if (INTEROP_TRACE_EMIT_ADDRESS(&writer, 170, 0,
+                                 UINT64_C(0xdeadbeef12345678)) != RBCT_OK) {
     return 9;
   }
   if (rbct_writer_finalize(&writer) != RBCT_OK) {

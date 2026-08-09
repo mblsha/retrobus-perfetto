@@ -67,8 +67,12 @@ summary = convert_compact_trace(
 
 `CompactTraceReader.iter_items()` validates and yields one bounded chunk at a
 time. `read_compact_trace()` collects a complete decoded model when host memory
-is not constrained. Both entry points require the exact external producer
-schema identified by the capture header.
+is not constrained and pre-indexes clock generations and correlation anchors
+for efficient timestamp conversion. Both entry points require the exact
+external producer schema identified by the capture header. Unfinalized reads
+are explicitly best-effort and report retained, successfully decoded records.
+`CompactTrace.uncorrelated_generations` identifies relative-only generations,
+including a wrapped prefix whose original clock anchor was overwritten.
 
 ### Direct Proto Access
 

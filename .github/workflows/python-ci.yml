@@ -51,8 +51,11 @@ jobs:
         uv run mypy retrobus_perfetto --config-file mypy.ini
 
   test:
-    name: test
+    name: test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
     steps:
     - uses: actions/checkout@v7
     - name: Install uv
@@ -60,14 +63,14 @@ jobs:
       with:
         enable-cache: true
     - name: Set up Python
-      run: uv python install 3.12
+      run: uv python install ${{ matrix.python-version }}
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y protobuf-compiler
     - name: Install Python dependencies
       run: |
-        uv sync --all-extras --locked
+        uv sync --all-extras --locked --python ${{ matrix.python-version }}
     - name: Generate protobuf files
       run: |
         uv run python -m grpc_tools.protoc \

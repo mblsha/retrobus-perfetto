@@ -24,7 +24,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("schema", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--prefix")
+    parser.add_argument(
+        "--prefix",
+        help=(
+            "C symbol prefix; defaults to the normalized producer name plus "
+            "producer ID and schema version"
+        ),
+    )
     args = parser.parse_args()
 
     schema = CompactSchema.load(args.schema)

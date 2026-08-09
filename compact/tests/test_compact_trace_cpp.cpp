@@ -1,10 +1,23 @@
 #include "retrobus/compact_trace.hpp"
 
 #include <array>
-#include <cassert>
 #include <cstdint>
 
+#define CHECK(expression) \
+  do {                    \
+    if (!(expression)) {  \
+      return __LINE__;    \
+    }                     \
+  } while (false)
+
 namespace {
+
+constexpr auto kUnsigned = retrobus::compact::unsigned_argument(7);
+constexpr auto kSigned = retrobus::compact::signed_argument(-7);
+constexpr auto kFixed = retrobus::compact::fixed64_argument(9);
+static_assert(kUnsigned.bits == 7);
+static_assert(kSigned.bits == 13);
+static_assert(kFixed.bits == 9);
 
 std::uint64_t read_clock(void* context) {
   auto* value = static_cast<std::uint64_t*>(context);
@@ -24,34 +37,44 @@ int main() {
   config.schema_version = 1;
 
   retrobus::compact::Writer writer{buffer.data(), buffer.size(), config};
-  assert(writer.enabled());
+  CHECK(writer.enabled());
   std::uint64_t clock_value = 100;
   retrobus::compact::Clock clock{read_clock, &clock_value};
   {
     retrobus::compact::TraceScope scope{
         &writer, clock, 0, 1, {retrobus::compact::unsigned_argument(8)}};
-    assert(scope.active());
-    assert(writer.emit(clock.now(), 0, 2) == RBCT_OK);
+    CHECK(scope.active());
+    CHECK(writer.emit(clock.now(), 0, 2) == RBCT_OK);
   }
   const auto after_enabled = clock_value;
   {
     retrobus::compact::TraceScope<16> disabled{nullptr, clock, 0, 1};
-    assert(!disabled.active());
+    CHECK(!disabled.active());
   }
-  assert(clock_value == after_enabled);
-  assert(writer.emit(clock.now(), 0, 2,
-                     {retrobus::compact::unsigned_argument(1),
-                      retrobus::compact::unsigned_argument(2),
-                      retrobus::compact::unsigned_argument(3),
-                      retrobus::compact::unsigned_argument(4),
-                      retrobus::compact::unsigned_argument(5)}) ==
-         RBCT_INVALID_ARGUMENT);
-  assert(writer.enabled());
+  CHECK(clock_value == after_enabled);
+  CHECK(writer.emit(clock.now(), 0, 2,
+                    {retrobus::compact::unsigned_argument(1),
+                     retrobus::compact::unsigned_argument(2),
+                     retrobus::compact::unsigned_argument(3),
+                     retrobus::compact::unsigned_argument(4),
+                     retrobus::compact::unsigned_argument(5)}) ==
+        RBCT_INVALID_ARGUMENT);
+  CHECK(writer.enabled());
   {
     retrobus::compact::TraceScope scope{&writer, clock, 0, 1};
-    assert(scope.active());
+    CHECK(scope.active());
+    CHECK(scope.cancel() == RBCT_OK);
+    CHECK(!scope.active());
   }
-  assert(writer.finalize() == RBCT_OK);
-  assert(writer.size() == buffer.size());
+  {
+    retrobus::compact::TraceScope scope{&writer, clock, 0, 1};
+    CHECK(scope.active());
+    clock_value = 0;
+  }
+  CHECK(writer.status() == RBCT_INVALID_ARGUMENT);
+  CHECK(writer.native_handle()->scope_depth == 0);
+  CHECK(writer.native_handle()->dropped_records == 3);
+  CHECK(writer.finalize() == RBCT_OK);
+  CHECK(writer.size() == buffer.size());
   return 0;
 }

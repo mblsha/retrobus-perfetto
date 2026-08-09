@@ -8,12 +8,19 @@
 extern "C" {
 #endif
 
-#define RBCT_FORMAT_VERSION 1u
+#define RBCT_FORMAT_VERSION 2u
 #define RBCT_FILE_HEADER_BYTES 160u
 #define RBCT_CHUNK_HEADER_BYTES 48u
 #define RBCT_CHUNK_BYTES 4096u
+#define RBCT_RECORD_FRAME_BYTES 4u
 #define RBCT_MAX_ARGUMENTS 4u
 #define RBCT_DIRECT_EVENT_ID_MAX 251u
+
+/*
+ * When a snapshot can race the writer, compile compact_trace.c with a
+ * target-specific RBCT_PLATFORM_PUBLISH_BARRIER() override on architectures
+ * without a built-in store barrier. Cache persistence remains platform policy.
+ */
 
 typedef enum rbct_status {
   RBCT_OK = 0,
@@ -78,18 +85,32 @@ typedef struct rbct_writer {
   size_t current_chunk;
   size_t valid_chunks;
   uint64_t next_sequence;
+  uint64_t clock_rate_numerator;
+  uint64_t clock_rate_denominator;
   uint64_t current_timestamp;
+  uint64_t last_observation;
+  uint64_t last_serialized_observation;
+  uint64_t last_sync_midpoint;
+  uint64_t last_sync_reference_ns;
+  uint64_t ticks_since_last_sync;
   uint64_t total_records;
   uint64_t overwritten_records;
   uint64_t dropped_records;
   uint64_t total_events;
   uint64_t overwritten_events;
   uint32_t current_generation;
+  uint32_t last_sync_generation;
   uint32_t current_track;
   uint32_t default_track;
   uint16_t clock_width_bits;
   uint8_t initialized;
   uint8_t finalized;
+  uint8_t has_observation;
+  uint8_t has_serialized_observation;
+  uint8_t has_sync;
+  uint8_t current_generation_has_record;
+  uint8_t current_generation_has_sync;
+  uint8_t sync_span_overflow;
   rbct_scope_t* scopes;
   size_t scope_capacity;
   size_t scope_depth;
@@ -115,6 +136,9 @@ rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
 
 rbct_status_t rbct_writer_end(rbct_writer_t* writer, uint64_t timestamp);
 
+/* Discard the innermost open scope without serializing it. */
+rbct_status_t rbct_writer_cancel(rbct_writer_t* writer);
+
 rbct_status_t rbct_writer_emit(rbct_writer_t* writer,
                                uint64_t timestamp,
                                uint32_t track_id,
@@ -126,6 +150,7 @@ rbct_status_t rbct_writer_clock_sync(rbct_writer_t* writer,
                                      uint32_t generation,
                                      uint64_t counter_before,
                                      uint64_t counter_after,
+                                     /* Perfetto BOOTTIME nanoseconds. */
                                      uint64_t reference_timestamp_ns,
                                      uint64_t uncertainty_ns);
 

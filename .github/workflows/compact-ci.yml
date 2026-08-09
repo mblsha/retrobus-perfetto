@@ -5,10 +5,26 @@ on:
     branches: [main, master]
     paths:
       - 'compact/**'
+      - 'py/retrobus_perfetto/compact.py'
+      - 'py/retrobus_perfetto/compact_schema.py'
+      - 'py/tests/test_compact.py'
+      - 'py/tests/test_compact_c_interop.py'
+      - 'py/pyproject.toml'
+      - 'py/uv.lock'
+      - 'tools/compact_schema_header.py'
+      - 'tools/compact_trace_to_perfetto.py'
       - '.github/workflows/compact-ci.yml'
   pull_request:
     paths:
       - 'compact/**'
+      - 'py/retrobus_perfetto/compact.py'
+      - 'py/retrobus_perfetto/compact_schema.py'
+      - 'py/tests/test_compact.py'
+      - 'py/tests/test_compact_c_interop.py'
+      - 'py/pyproject.toml'
+      - 'py/uv.lock'
+      - 'tools/compact_schema_header.py'
+      - 'tools/compact_trace_to_perfetto.py'
       - '.github/workflows/compact-ci.yml'
 
 jobs:
@@ -36,17 +52,132 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCMAKE_C_COMPILER=${{ matrix.c }}
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_C_FLAGS="-Wall -Wextra -Werror"
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
       - name: Build
         run: cmake --build build/compact
+      - name: Check target library runtime imports
+        run: |
+          undefined="$(nm -u build/compact/libretrobus_compact_trace.a | \
+            awk '$1 == "U" {print $2}')"
+          test -z "$undefined"
       - name: Test
         run: ctest --test-dir build/compact --output-on-failure
+      - name: Check C-only configuration without a C++ compiler
+        if: matrix.compiler == 'clang' && matrix.build_type == 'Release'
+        run: |
+          cmake -S compact -B build/compact-c-only -G Ninja \
+            -DRBCT_BUILD_CPP=OFF \
+            -DRBCT_BUILD_TESTS=ON \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=/definitely/missing/cxx
+          cmake --build build/compact-c-only
+          ctest --test-dir build/compact-c-only --output-on-failure
       - name: Check ARMv5TE freestanding object
         if: matrix.compiler == 'clang' && matrix.build_type == 'Release'
         run: |
           clang --target=armv5te-none-eabi -march=armv5te -mfloat-abi=soft \
-            -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
+            -std=c99 -Os -ffreestanding -fno-stack-protector \
             -Wall -Wextra -Werror -Icompact/include \
             -c compact/src/compact_trace.c -o build/compact/compact_trace_armv5te.o
           undefined="$(readelf -Ws build/compact/compact_trace_armv5te.o | \
             awk '$7 == "UND" && $8 != "" {print $8}')"
           test -z "$undefined"
+          clang --target=armv7a-none-eabi -march=armv7-a -mfloat-abi=soft \
+            -std=c99 -Os -ffreestanding -fno-stack-protector \
+            -Wall -Wextra -Werror -Icompact/include \
+            -S compact/src/compact_trace.c -o build/compact/compact_trace_armv7a.s
+          grep -Eq '\bdmb\b' build/compact/compact_trace_armv7a.s
+
+  msvc:
+    name: MSVC x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure
+        run: >-
+          cmake -S compact -B build/compact-msvc
+          -A x64
+          -DRBCT_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build/compact-msvc --config Release
+      - name: Check target library runtime imports
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -property installationPath
+          $dumpbin = Get-ChildItem "$install\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $dumpbin) {
+            throw "dumpbin.exe was not found"
+          }
+          $library = "build\compact-msvc\Release\retrobus_compact_trace.lib"
+          $undefined = & $dumpbin.FullName /symbols $library |
+            Select-String 'UNDEF.*External'
+          if ($undefined) {
+            $undefined | Write-Output
+            throw "compact target library has unresolved runtime symbols"
+          }
+          $defaultLibraries = & $dumpbin.FullName /directives $library |
+            Select-String 'DEFAULTLIB'
+          if ($defaultLibraries) {
+            $defaultLibraries | Write-Output
+            throw "compact target library names a default runtime library"
+          }
+      - name: Test
+        run: ctest --test-dir build/compact-msvc -C Release --output-on-failure
+      - name: Cross-build MSVC ARM64 C library
+        run: >-
+          cmake -S compact -B build/compact-msvc-arm64
+          -A ARM64
+          -DRBCT_BUILD_CPP=OFF
+          -DRBCT_BUILD_TESTS=OFF
+      - name: Build MSVC ARM64 C library
+        run: cmake --build build/compact-msvc-arm64 --config Release
+
+  sanitizers:
+    name: Clang ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build clang
+      - name: Configure
+        run: >-
+          cmake -S compact -B build/compact-sanitized -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_C_FLAGS="-Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build build/compact-sanitized
+      - name: Test
+        run: ctest --test-dir build/compact-sanitized --output-on-failure
+
+  interop:
+    name: C writer / Python ${{ matrix.python-version }} reader
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.12']
+    defaults:
+      run:
+        working-directory: py
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --all-extras --locked --python ${{ matrix.python-version }}
+      - name: Run compact protocol tests
+        run: >-
+          uv run pytest
+          tests/test_compact.py
+          tests/test_compact_c_interop.py

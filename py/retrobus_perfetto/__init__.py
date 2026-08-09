@@ -42,7 +42,7 @@ from .merge import merge_perfetto_traces
 # Make proto module available for direct import
 from . import proto
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "PerfettoTraceBuilder",
     "CompactArgumentSchema",

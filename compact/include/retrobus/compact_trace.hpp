@@ -15,15 +15,17 @@ using Status = rbct_status_t;
 
 [[nodiscard]] constexpr Argument unsigned_argument(
     std::uint64_t value) noexcept {
-  return rbct_argument_u64(value);
+  return Argument{value, RBCT_ARGUMENT_ULEB128, {0, 0, 0, 0, 0, 0, 0}};
 }
 
 [[nodiscard]] constexpr Argument signed_argument(std::int64_t value) noexcept {
-  return rbct_argument_i64(value);
+  const auto encoded = (static_cast<std::uint64_t>(value) << 1u) ^
+                       static_cast<std::uint64_t>(-(value < 0));
+  return unsigned_argument(encoded);
 }
 
 [[nodiscard]] constexpr Argument fixed64_argument(std::uint64_t bits) noexcept {
-  return rbct_argument_fixed64(bits);
+  return Argument{bits, RBCT_ARGUMENT_FIXED64, {0, 0, 0, 0, 0, 0, 0}};
 }
 
 struct Clock {
@@ -68,6 +70,11 @@ class Writer {
 
   Status end(std::uint64_t timestamp) noexcept {
     status_ = rbct_writer_end(&writer_, timestamp);
+    return status_;
+  }
+
+  Status cancel() noexcept {
+    status_ = rbct_writer_cancel(&writer_);
     return status_;
   }
 
@@ -125,8 +132,9 @@ class TraceScope {
   }
 
   ~TraceScope() {
-    if (active_) {
-      static_cast<void>(writer_->end(clock_.now()));
+    if (active_ && writer_->end(clock_.now()) != RBCT_OK) {
+      /* A destructor cannot retry; discard the retained scope explicitly. */
+      static_cast<void>(rbct_writer_cancel(writer_->native_handle()));
     }
   }
 
@@ -136,6 +144,17 @@ class TraceScope {
   TraceScope& operator=(TraceScope&&) = delete;
 
   [[nodiscard]] bool active() const noexcept { return active_; }
+
+  Status cancel() noexcept {
+    if (!active_ || writer_ == nullptr) {
+      return RBCT_INVALID_STATE;
+    }
+    const Status status = writer_->cancel();
+    if (status == RBCT_OK) {
+      active_ = false;
+    }
+    return status;
+  }
 
  private:
   Writer<ScopeDepth>* writer_{};
