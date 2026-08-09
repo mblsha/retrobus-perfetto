@@ -13,6 +13,10 @@ from .compact import CompactTraceReader as CompactTraceReader
 from .compact import compact_trace_to_builder as compact_trace_to_builder
 from .compact import convert_compact_trace as convert_compact_trace
 from .compact import read_compact_trace as read_compact_trace
+from .compact_codec import CompactCodecEntry as CompactCodecEntry
+from .compact_codec import CompactCodecProfile as CompactCodecProfile
+from .compact_codec import CompactCodecProfileError as CompactCodecProfileError
+from .compact_codec import render_c_codec_profile as render_c_codec_profile
 from .compact_schema import CompactArgumentSchema as CompactArgumentSchema
 from .compact_schema import CompactEventSchema as CompactEventSchema
 from .compact_schema import CompactSchema as CompactSchema

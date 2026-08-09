@@ -1,5 +1,8 @@
 # Compact v3 density audit
 
+This is the corrected v3 baseline. The subsequent static-profile experiments
+and current writer are documented in `V4_CODEC_AUDIT.md`.
+
 This audit defines “better” as all of the following at once:
 
 - direct Redux records are never larger than v1 and remove v2's structural
@@ -48,20 +51,20 @@ A 4048-byte chunk payload therefore holds 1349 representative Redux slices in
 v3 versus 1012 in v2, a 33.30% capacity gain. It also retains 4048 eligible
 one-byte instants.
 
-Historical host-clock boot traces were reconstructed from their paired
-Perfetto output and replayed by logical event ID, delta, duration, and stored
-arguments. They use earlier Redux instrumentation and an obsolete `RDXTRC1`
+Historical host-clock boot traces were decoded from their raw obsolete
+`RDXTRC1` record streams and replayed by logical event ID, delta, duration, and
+wire-stored arguments. They use earlier Redux instrumentation
 container, so these numbers are diagnostic and are not the v3 acceptance
 corpus:
 
 | Capture | Records | Version | Framing | Identity | Delta | Duration | Arguments | Payload | B/record |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Zire 31 cold boot | 115,925 | v1 | 0 | 115,925 | 116,129 | 116,090 | 115,916 | 464,060 | 4.0031 |
-| Zire 31 cold boot | 115,925 | v2 | 115,925 | 115,925 | 66,472 | 116,090 | 115,916 | 530,328 | 4.5748 |
-| Zire 31 cold boot | 115,925 | v3 | 0 | 115,925 | 116,128 | 116,090 | 115,916 | 464,059 | 4.0031 |
-| Tungsten T3 cold boot | 269,073 | v1 | 0 | 269,073 | 269,610 | 269,816 | 269,058 | 1,077,557 | 4.0047 |
-| Tungsten T3 cold boot | 269,073 | v2 | 269,073 | 269,073 | 157,761 | 269,816 | 269,058 | 1,234,781 | 4.5890 |
-| Tungsten T3 cold boot | 269,073 | v3 | 0 | 269,073 | 269,610 | 269,816 | 269,058 | 1,077,557 | 4.0047 |
+| Zire 31 cold boot | 115,925 | v1 | 0 | 115,925 | 116,129 | 116,090 | 14 | 348,158 | 3.0033 |
+| Zire 31 cold boot | 115,925 | v2 | 115,925 | 115,925 | 66,472 | 116,090 | 14 | 414,426 | 3.5749 |
+| Zire 31 cold boot | 115,925 | v3 | 0 | 115,925 | 116,128 | 116,090 | 14 | 348,157 | 3.0033 |
+| Tungsten T3 cold boot | 269,073 | v1 | 0 | 269,073 | 269,610 | 269,816 | 14 | 808,513 | 3.0048 |
+| Tungsten T3 cold boot | 269,073 | v2 | 269,073 | 269,073 | 157,761 | 269,816 | 14 | 965,737 | 3.5891 |
+| Tungsten T3 cold boot | 269,073 | v3 | 0 | 269,073 | 269,610 | 269,816 | 14 | 808,513 | 3.0048 |
 
 V2 had zero inline hits. V3 had one historical Zire screen-mutation alias hit
 and no T3 hit; its important result is eliminating the extra byte from ordinary
@@ -69,7 +72,10 @@ records. More than 99.8% of historical deltas and durations were already
 one-byte varints. The 32 most frequent exact tuples covered 80.38% of Zire and
 77.61% of T3 records, but no host-clock tuple profile is embedded in v3.
 
-The obsolete containers themselves used 348,158 payload bytes plus 1,346 bytes
+The earlier attribution accidentally counted schema-restored `entry`
+annotations as stored arguments. Those annotations consume no wire bytes; the
+table above is the corrected raw-record attribution. The obsolete containers
+used 348,158 payload bytes plus 1,346 bytes
 of slack across 86 Zire chunks, and 808,513 payload bytes plus 4,287 bytes of
 slack across 200 T3 chunks. Those container costs are not comparable to RBCT
 v1/v2/v3 record attribution.

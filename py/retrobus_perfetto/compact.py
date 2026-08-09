@@ -20,18 +20,24 @@ from .compact_schema import (
     CompactEventSchema,
     CompactSchema,
 )
+from .compact_codec import CompactCodecEntry, CompactCodecProfile
 
 
 RBCT_MAGIC_V1 = b"RBCTRC1\0"
 RBCT_MAGIC_V2 = b"RBCTRC2\0"
 RBCT_MAGIC_V3 = b"RBCTRC3\0"
-RBCT_MAGIC = RBCT_MAGIC_V3
-RBCT_MAGICS = frozenset((RBCT_MAGIC_V1, RBCT_MAGIC_V2, RBCT_MAGIC_V3))
+RBCT_MAGIC_V4 = b"RBCTRC4\0"
+RBCT_MAGIC = RBCT_MAGIC_V4
+RBCT_MAGICS = frozenset(
+    (RBCT_MAGIC_V1, RBCT_MAGIC_V2, RBCT_MAGIC_V3, RBCT_MAGIC_V4)
+)
 RBCT_CHUNK_MAGIC = b"RBCK"
 LEGACY_FORMAT_VERSION = 1
 FRAMED_FORMAT_VERSION = 2
-FORMAT_VERSION = 3
-FILE_HEADER_BYTES = 160
+SEMANTIC_OPCODE_FORMAT_VERSION = 3
+FORMAT_VERSION = 4
+LEGACY_FILE_HEADER_BYTES = 160
+FILE_HEADER_BYTES = 192
 CHUNK_HEADER_BYTES = 48
 CHUNK_BYTES = 4096
 RECORD_FRAME_BYTES = 1
@@ -74,6 +80,7 @@ class CompactTraceHeader:
     buffer_bytes: int
     initial_generation: int
     default_track: int
+    codec_profile_sha256: bytes = b""
 
     @property
     def finalized(self) -> bool:
@@ -334,6 +341,7 @@ class _Chunk:
     events: int
     syncs: int
     crc32: int
+    committed_bits: int | None = None
 
 
 def _read_varint(
@@ -747,6 +755,215 @@ def _decode_v3_record(
     )
 
 
+class _BitReader:
+    def __init__(self, data: bytes, limit: int) -> None:
+        if limit < 0 or limit > len(data) * 8:
+            raise CompactTraceError("compact v4 bit cursor exceeds payload bounds")
+        self.data = data
+        self.limit = limit
+        self.offset = 0
+
+    def read_bits(self, width: int) -> int:
+        if width < 0 or self.offset + width > self.limit:
+            raise CompactTraceError("compact v4 record is truncated")
+        value = 0
+        for index in range(width):
+            bit_offset = self.offset + index
+            value |= ((self.data[bit_offset >> 3] >> (bit_offset & 7)) & 1) << index
+        self.offset += width
+        return value
+
+    def read_varint(self) -> int:
+        value = 0
+        for index in range(10):
+            byte = self.read_bits(8)
+            if index == 9 and byte > 1:
+                raise CompactTraceError("ULEB128 value exceeds unsigned 64-bit range")
+            value |= (byte & 0x7F) << (index * 7)
+            if byte & 0x80 == 0:
+                if index and byte == 0:
+                    raise CompactTraceError("ULEB128 value is not canonically encoded")
+                return value
+        raise CompactTraceError("oversized ULEB128 value")
+
+
+def _v4_model_state(
+    event_id: int, profile: CompactCodecProfile | None
+) -> int:
+    if profile is None:
+        return 2
+    if event_id == profile.state_events[0]:
+        return 0
+    if event_id == profile.state_events[1]:
+        return 1
+    return 2
+
+
+def _decode_v4_argument(
+    reader: _BitReader, specification: CompactArgumentSchema
+) -> Any:
+    if specification.type in {"fixed64", "float64"}:
+        bits = reader.read_bits(64)
+        if specification.type == "float64":
+            return struct.unpack("<d", bits.to_bytes(8, "little"))[0]
+        return bits
+    encoded = reader.read_varint()
+    if specification.type == "sint":
+        return (encoded >> 1) ^ -(encoded & 1)
+    if specification.type == "bool":
+        if encoded not in (0, 1):
+            raise CompactTraceError(
+                f"boolean argument {specification.name!r} is not zero or one"
+            )
+        return bool(encoded)
+    return encoded
+
+
+def _decode_v4_item(
+    reader: _BitReader,
+    *,
+    chunk: _Chunk,
+    schema: CompactSchema,
+    event_by_opcode: Mapping[int, int],
+    profile: CompactCodecProfile | None,
+    model_state: int,
+    clock_width_bits: int,
+    timestamp: int,
+    track_id: int,
+    order: int,
+) -> tuple[CompactRecord | CompactClockSync, int, int, int]:
+    code = 0
+    entry: object = ...
+    for width in range(1, 13):
+        code |= reader.read_bits(1) << (width - 1)
+        if profile is None:
+            if width == 1 and code == 0:
+                entry = None
+                break
+        else:
+            entry = profile.decode_symbol(model_state, code, width)
+            if entry is not ...:
+                break
+    if entry is ...:
+        raise CompactTraceError(
+            f"chunk {chunk.sequence} uses an unknown v4 prefix code"
+        )
+    mask = (1 << clock_width_bits) - 1
+    half_range = 1 << (clock_width_bits - 1)
+    if entry is None:
+        literal_kind = reader.read_bits(2)
+        if literal_kind == 2:
+            generation = reader.read_varint()
+            before = reader.read_varint()
+            after = reader.read_varint()
+            reference_ns = reader.read_varint()
+            uncertainty_ns = reader.read_varint()
+            if generation != chunk.generation:
+                raise CompactTraceError(
+                    f"chunk {chunk.sequence} clock sync generation mismatch"
+                )
+            if before & ~mask or after & ~mask:
+                raise CompactTraceError(
+                    f"chunk {chunk.sequence} clock sync exceeds counter width"
+                )
+            if ((after - before) & mask) >= half_range:
+                raise CompactTraceError(
+                    f"chunk {chunk.sequence} clock sync interval is ambiguous"
+                )
+            return (
+                CompactClockSync(
+                    generation,
+                    before,
+                    after,
+                    reference_ns,
+                    uncertainty_ns,
+                    order,
+                ),
+                _midpoint_counter(before, after, mask),
+                track_id,
+                model_state,
+            )
+        if literal_kind not in (0, 1):
+            raise CompactTraceError("compact v4 literal kind is reserved")
+        if literal_kind == 1:
+            selected_track = reader.read_varint()
+            if selected_track == track_id:
+                raise CompactTraceError(
+                    f"chunk {chunk.sequence} has a redundant track selection"
+                )
+            if selected_track not in schema.tracks:
+                raise CompactTraceError(
+                    f"chunk {chunk.sequence} selects unknown track {selected_track}"
+                )
+            track_id = selected_track
+        identity = reader.read_bits(8)
+        if identity == 0xFF:
+            event_id = reader.read_varint()
+        else:
+            event_id = event_by_opcode.get(identity, -1)
+            if event_id < 0:
+                raise CompactTraceError(
+                    f"chunk {chunk.sequence} uses unknown schema opcode "
+                    f"0x{identity:02x}"
+                )
+        event = schema.events.get(event_id)
+        if event is None:
+            raise CompactTraceError(f"unknown compact event ID {event_id}")
+        delta = reader.read_varint()
+        if delta & ~mask or delta >= half_range:
+            raise CompactTraceError(
+                f"event {event.id} timestamp delta is ambiguous"
+            )
+        duration: int | None = None
+        if event.kind == "slice":
+            duration = reader.read_varint()
+        arguments = tuple(
+            _decode_v4_argument(reader, specification)
+            for specification in event.arguments
+        )
+    else:
+        if not isinstance(entry, CompactCodecEntry):
+            raise AssertionError("unexpected compact v4 profile symbol")
+        event_id = entry.event_id
+        event = schema.events[event_id]
+        delta = entry.delta
+        duration = entry.duration
+        arguments = ()
+    if duration is not None and duration >= half_range:
+        raise CompactTraceError(f"slice event {event.id} duration is ambiguous")
+    timestamp = (timestamp + delta) & mask
+    track = schema.tracks[track_id]
+    is_counter = event.kind == "counter"
+    if is_counter != (track.kind == "counter"):
+        raise CompactTraceError(
+            f"event {event.id} is incompatible with {track.kind} track {track_id}"
+        )
+    if is_counter:
+        value = arguments[0]
+        if isinstance(value, int) and value > 0x7FFF_FFFF_FFFF_FFFF:
+            raise CompactTraceError(
+                f"counter event {event.id} exceeds Perfetto's signed 64-bit range"
+            )
+        if isinstance(value, float) and not math.isfinite(value):
+            raise CompactTraceError(
+                f"counter event {event.id} has a non-finite value"
+            )
+    return (
+        CompactRecord(
+            event,
+            chunk.generation,
+            track_id,
+            timestamp,
+            duration,
+            arguments,
+            order,
+        ),
+        timestamp,
+        track_id,
+        _v4_model_state(event.id, profile),
+    )
+
+
 class CompactTraceReader:
     """Scan chunk headers first, then decode bounded payloads in sequence order."""
 
@@ -756,10 +973,34 @@ class CompactTraceReader:
         schema: CompactSchema,
         *,
         allow_unfinalized: bool = False,
+        codec_profile: CompactCodecProfile | Path | str | None = None,
     ) -> None:
         self.path = Path(path)
         self.schema = schema
         self.allow_unfinalized = allow_unfinalized
+        self.codec_profile = (
+            codec_profile
+            if isinstance(codec_profile, CompactCodecProfile)
+            else (
+                CompactCodecProfile.load(codec_profile, schema)
+                if codec_profile is not None
+                else None
+            )
+        )
+        if (
+            self.codec_profile is not None
+            and self.codec_profile.schema_sha256 != schema.sha256
+        ):
+            raise CompactTraceError("compact codec profile schema SHA-256 mismatch")
+        if self.codec_profile is not None:
+            if any(event_id not in schema.events for event_id in self.codec_profile.state_events):
+                raise CompactTraceError("compact codec state event is absent from schema")
+            for entry in self.codec_profile.entries:
+                event = schema.events.get(entry.event_id)
+                if event is None or event.kind != "slice" or event.arguments:
+                    raise CompactTraceError(
+                        "compact codec entry is not a zero-argument schema slice"
+                    )
         self._file_identity: tuple[int, int, int, int, int]
         self.header, self._chunks = self._read_header_and_chunks()
 
@@ -779,30 +1020,42 @@ class CompactTraceReader:
             with self.path.open("rb") as source:
                 self._file_identity = self._identity(source)
                 file_size = self._file_identity[2]
-                raw_header = source.read(FILE_HEADER_BYTES)
-                if len(raw_header) != FILE_HEADER_BYTES:
+                header_prefix = source.read(16)
+                if len(header_prefix) != 16:
                     raise CompactTraceError("compact file header is truncated")
-                magic = raw_header[:8]
+                magic = header_prefix[:8]
                 if magic not in RBCT_MAGICS:
                     raise CompactTraceError("not a retrobus compact trace")
                 version, header_bytes, chunk_header_bytes, reserved = (
-                    struct.unpack_from("<HHHH", raw_header, 8)
+                    struct.unpack_from("<HHHH", header_prefix, 8)
                 )
+                if header_bytes not in (LEGACY_FILE_HEADER_BYTES, FILE_HEADER_BYTES):
+                    raise CompactTraceError("unsupported compact header layout")
+                raw_header = header_prefix + source.read(header_bytes - 16)
+                if len(raw_header) != header_bytes:
+                    raise CompactTraceError("compact file header is truncated")
                 chunk_bytes = struct.unpack_from("<I", raw_header, 16)[0]
                 if (
                     version
                     not in (
                         LEGACY_FORMAT_VERSION,
                         FRAMED_FORMAT_VERSION,
+                        SEMANTIC_OPCODE_FORMAT_VERSION,
                         FORMAT_VERSION,
                     )
                     or magic
                     != {
                         LEGACY_FORMAT_VERSION: RBCT_MAGIC_V1,
                         FRAMED_FORMAT_VERSION: RBCT_MAGIC_V2,
-                        FORMAT_VERSION: RBCT_MAGIC_V3,
+                        SEMANTIC_OPCODE_FORMAT_VERSION: RBCT_MAGIC_V3,
+                        FORMAT_VERSION: RBCT_MAGIC_V4,
                     }[version]
-                    or header_bytes != FILE_HEADER_BYTES
+                    or header_bytes
+                    != (
+                        FILE_HEADER_BYTES
+                        if version == FORMAT_VERSION
+                        else LEGACY_FILE_HEADER_BYTES
+                    )
                     or chunk_header_bytes != CHUNK_HEADER_BYTES
                     or chunk_bytes != CHUNK_BYTES
                     or reserved != 0
@@ -864,11 +1117,24 @@ class CompactTraceReader:
                 schema_hash = raw_header[48:80]
                 if schema_hash != self.schema.sha256:
                     raise CompactTraceError("producer schema SHA-256 mismatch")
+                profile_hash = raw_header[160:192] if version == FORMAT_VERSION else b""
+                if version == FORMAT_VERSION:
+                    if profile_hash == b"\0" * 32:
+                        if self.codec_profile is not None:
+                            raise CompactTraceError(
+                                "literal-only compact v4 trace does not use a codec profile"
+                            )
+                    elif self.codec_profile is None:
+                        raise CompactTraceError(
+                            "compact v4 trace requires its external codec profile"
+                        )
+                    elif profile_hash != self.codec_profile.sha256:
+                        raise CompactTraceError("compact codec profile SHA-256 mismatch")
                 buffer_bytes = counts[5]
                 if (
                     buffer_bytes != file_size
-                    or (file_size - FILE_HEADER_BYTES) % CHUNK_BYTES
-                    or file_size < FILE_HEADER_BYTES + CHUNK_BYTES
+                    or (file_size - header_bytes) % CHUNK_BYTES
+                    or file_size < header_bytes + CHUNK_BYTES
                 ):
                     raise CompactTraceError(
                         "compact buffer size does not match file size"
@@ -877,10 +1143,10 @@ class CompactTraceReader:
                     raise CompactTraceError(f"unknown default track {default_track}")
 
                 chunks: list[_Chunk] = []
-                chunk_count = (file_size - FILE_HEADER_BYTES) // CHUNK_BYTES
+                chunk_count = (file_size - header_bytes) // CHUNK_BYTES
                 mask = (1 << width) - 1
                 for physical_index in range(chunk_count):
-                    source.seek(FILE_HEADER_BYTES + physical_index * CHUNK_BYTES)
+                    source.seek(header_bytes + physical_index * CHUNK_BYTES)
                     chunk_header = source.read(CHUNK_HEADER_BYTES)
                     if chunk_header == b"\0" * CHUNK_HEADER_BYTES:
                         if flags & FLAG_FINALIZED:
@@ -906,7 +1172,13 @@ class CompactTraceReader:
                     generation, chunk_track = struct.unpack_from(
                         "<II", chunk_header, 20
                     )
-                    used, records = struct.unpack_from("<HH", chunk_header, 28)
+                    used_field, records = struct.unpack_from("<HH", chunk_header, 28)
+                    committed_bits = used_field if version == FORMAT_VERSION else None
+                    used = (
+                        (used_field + 7) // 8
+                        if committed_bits is not None
+                        else used_field
+                    )
                     events = struct.unpack_from("<I", chunk_header, 32)[0]
                     syncs, chunk_reserved = struct.unpack_from("<HH", chunk_header, 36)
                     payload_crc, final_reserved = struct.unpack_from(
@@ -923,7 +1195,7 @@ class CompactTraceReader:
                                 f"chunk {sequence} header CRC mismatch"
                             )
                     elif final_reserved != 0 and not (
-                        recovering and version == FORMAT_VERSION
+                        recovering and version >= SEMANTIC_OPCODE_FORMAT_VERSION
                     ):
                         crc_header = bytearray(chunk_header)
                         struct.pack_into("<I", crc_header, 44, 0)
@@ -936,10 +1208,19 @@ class CompactTraceReader:
                             raise CompactTraceError(
                                 f"chunk {sequence} reserved fields are nonzero"
                             )
-                    if used > CHUNK_BYTES - CHUNK_HEADER_BYTES:
-                        if recovering and version == LEGACY_FORMAT_VERSION:
-                            continue
-                        if not recovering:
+                    if (
+                        committed_bits is not None
+                        and committed_bits > (CHUNK_BYTES - CHUNK_HEADER_BYTES) * 8
+                    ) or used > CHUNK_BYTES - CHUNK_HEADER_BYTES:
+                        if recovering:
+                            # V2/v3 treat the byte cursor as lagging metadata and
+                            # scan exactly one physical payload. V1 uses it as a
+                            # read bound, and v4 uses committed_bits as its
+                            # publication bound, so malformed values in those
+                            # formats make the chunk unrecoverable.
+                            if version in (LEGACY_FORMAT_VERSION, FORMAT_VERSION):
+                                continue
+                        else:
                             raise CompactTraceError(
                                 f"chunk {sequence} payload exceeds bounds"
                             )
@@ -977,6 +1258,7 @@ class CompactTraceReader:
                             events,
                             syncs,
                             payload_crc,
+                            committed_bits,
                         )
                     )
                 if self._identity(source) != self._file_identity:
@@ -1044,6 +1326,7 @@ class CompactTraceReader:
             buffer_bytes=buffer_bytes,
             initial_generation=initial_generation,
             default_track=default_track,
+            codec_profile_sha256=profile_hash,
         )
         return header, tuple(chunks)
 
@@ -1069,14 +1352,19 @@ class CompactTraceReader:
                 if self._identity(source) != self._file_identity:
                     raise CompactTraceError("compact trace changed while being read")
                 for chunk_index, chunk in enumerate(self._chunks):
-                    source.seek(
+                    file_header_bytes = (
                         FILE_HEADER_BYTES
+                        if format_version == FORMAT_VERSION
+                        else LEGACY_FILE_HEADER_BYTES
+                    )
+                    source.seek(
+                        file_header_bytes
                         + chunk.physical_index * CHUNK_BYTES
                         + CHUNK_HEADER_BYTES
                     )
                     payload_bytes = (
                         CHUNK_BYTES - CHUNK_HEADER_BYTES
-                        if strict and recover
+                        if strict and recover and format_version != FORMAT_VERSION
                         else chunk.used
                     )
                     payload = source.read(payload_bytes)
@@ -1088,6 +1376,16 @@ class CompactTraceReader:
                     ):
                         raise CompactTraceError(f"chunk {chunk.sequence} CRC mismatch")
                     if self.header.finalized and strict:
+                        if (
+                            format_version == FORMAT_VERSION
+                            and chunk.committed_bits is not None
+                            and chunk.committed_bits & 7
+                            and payload
+                            and payload[-1] & ~((1 << (chunk.committed_bits & 7)) - 1)
+                        ):
+                            raise CompactTraceError(
+                                f"chunk {chunk.sequence} has nonzero unused payload bits"
+                            )
                         slack = source.read(
                             CHUNK_BYTES - CHUNK_HEADER_BYTES - chunk.used
                         )
@@ -1105,6 +1403,7 @@ class CompactTraceReader:
                     chunk_records = 0
                     chunk_events = 0
                     chunk_syncs = 0
+                    model_state = 2
 
                     def account(item: CompactRecord | CompactClockSync) -> None:
                         nonlocal chunk_records, chunk_events, chunk_syncs
@@ -1114,7 +1413,32 @@ class CompactTraceReader:
                             chunk_records += 1
                             chunk_events += 2 if item.event.kind == "slice" else 1
 
-                    if format_version == FRAMED_FORMAT_VERSION:
+                    if format_version == FORMAT_VERSION:
+                        assert chunk.committed_bits is not None
+                        bit_reader = _BitReader(payload, chunk.committed_bits)
+                        while bit_reader.offset < bit_reader.limit:
+                            try:
+                                item, timestamp, track_id, model_state = _decode_v4_item(
+                                    bit_reader,
+                                    chunk=chunk,
+                                    schema=self.schema,
+                                    event_by_opcode=event_by_opcode,
+                                    profile=self.codec_profile,
+                                    model_state=model_state,
+                                    clock_width_bits=self.header.clock_width_bits,
+                                    timestamp=timestamp,
+                                    track_id=track_id,
+                                    order=order,
+                                )
+                            except CompactTraceError:
+                                if recover:
+                                    stop_recovery = True
+                                    break
+                                raise
+                            account(item)
+                            yield item
+                            order += 1
+                    elif format_version == FRAMED_FORMAT_VERSION:
                         while offset < len(payload):
                             if len(payload) - offset < RECORD_FRAME_BYTES:
                                 if recover:
@@ -1188,7 +1512,7 @@ class CompactTraceReader:
                             yield item
                             order += 1
                             offset = frame_end
-                    elif format_version == FORMAT_VERSION:
+                    elif format_version == SEMANTIC_OPCODE_FORMAT_VERSION:
                         while offset < len(payload):
                             committed_opcode = payload[offset]
                             if committed_opcode == 0 and recover:
@@ -1286,6 +1610,7 @@ def read_compact_trace(
     schema: CompactSchema | Path | str,
     *,
     allow_unfinalized: bool = False,
+    codec_profile: CompactCodecProfile | Path | str | None = None,
 ) -> CompactTrace:
     """Read and validate a producer-neutral `.rbct` image."""
     producer_schema = (
@@ -1293,7 +1618,10 @@ def read_compact_trace(
     )
     source = Path(path)
     return CompactTraceReader(
-        source, producer_schema, allow_unfinalized=allow_unfinalized
+        source,
+        producer_schema,
+        allow_unfinalized=allow_unfinalized,
+        codec_profile=codec_profile,
     ).read()
 
 
@@ -1835,6 +2163,7 @@ def convert_compact_trace(
     *,
     normalize_start: bool = False,
     allow_unfinalized: bool = False,
+    codec_profile: CompactCodecProfile | Path | str | None = None,
 ) -> dict[str, Any]:
     """Decode, validate, reconstruct, and atomically publish a Perfetto trace."""
     input_source = Path(input_path)
@@ -1847,7 +2176,10 @@ def convert_compact_trace(
     ):
         raise CompactTraceError("compact conversion output must not replace its schema")
     trace = read_compact_trace(
-        input_path, schema_path, allow_unfinalized=allow_unfinalized
+        input_path,
+        schema_path,
+        allow_unfinalized=allow_unfinalized,
+        codec_profile=codec_profile,
     )
     builder = compact_trace_to_builder(trace, normalize_start=normalize_start)
     serialized = builder.serialize()

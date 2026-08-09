@@ -63,7 +63,7 @@ int main(void) {
 
   data = (const uint8_t*)rbct_writer_data(&writer);
   CHECK(data != 0);
-  CHECK(data[0] == 'R' && data[1] == 'B' && data[6] == '3');
+  CHECK(data[0] == 'R' && data[1] == 'B' && data[6] == '4');
   CHECK((get_u16(data, 38u) & 1u) != 0u);
   CHECK((get_u16(data, 38u) & 4u) != 0u);
   CHECK(get_u64(data, 96u) == 3u);

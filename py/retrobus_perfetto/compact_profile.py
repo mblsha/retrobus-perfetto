@@ -1,4 +1,4 @@
-"""Replay compact logical records through v1/v2/v3 density models."""
+"""Replay compact logical records through v1/v2/v3/v4 density models."""
 
 from __future__ import annotations
 
@@ -15,7 +15,9 @@ from .compact import (
     CompactRecord,
     CompactTrace,
     CompactTraceReader,
+    LEGACY_FILE_HEADER_BYTES,
 )
+from .compact_codec import CompactCodecProfile
 from .compact_schema import CompactArgumentSchema, CompactSchema
 
 
@@ -320,6 +322,7 @@ class _EncodingModel:
         events = sum(chunk.events for chunk in self.chunks)
         syncs = sum(chunk.syncs for chunk in self.chunks)
         chunk_slack = len(self.chunks) * PAYLOAD_BYTES - payload_bytes
+        container_bytes = LEGACY_FILE_HEADER_BYTES + len(self.chunks) * CHUNK_BYTES
         overwritten_chunks = max(0, len(self.chunks) - self.chunk_count)
         overwritten_records = sum(
             chunk.records for chunk in self.chunks[:overwritten_chunks]
@@ -330,7 +333,7 @@ class _EncodingModel:
         attributions = dict(self.attribution)
         attributions.update(
             {
-                "file_header": FILE_HEADER_BYTES,
+                "file_header": LEGACY_FILE_HEADER_BYTES,
                 "chunk_headers": len(self.chunks) * CHUNK_HEADER_BYTES,
                 "chunk_slack": chunk_slack,
                 "unused_chunk_capacity": 0,
@@ -358,6 +361,7 @@ class _EncodingModel:
             "expanded_events": events,
             "clock_syncs": syncs,
             "payload_bytes": payload_bytes,
+            "container_bytes": container_bytes,
             "bytes_per_record": payload_bytes / records if records else 0.0,
             "records_per_payload_kib": records * 1024 / payload_bytes
             if payload_bytes
@@ -382,14 +386,283 @@ class _EncodingModel:
         }
 
 
+@dataclass
+class _BitChunkModel:
+    generation: int
+    base_timestamp: int
+    used_bits: int = 0
+    records: int = 0
+    events: int = 0
+    syncs: int = 0
+
+
+class _V4EncodingModel:
+    def __init__(
+        self,
+        trace: CompactTrace,
+        chunk_count: int,
+        profile: CompactCodecProfile | None,
+    ) -> None:
+        self.trace = trace
+        self.chunk_count = chunk_count
+        self.profile = profile
+        self.mask = (1 << trace.header.clock_width_bits) - 1
+        self.current_generation = trace.header.initial_generation
+        self.current_timestamp = 0
+        self.current_track = trace.header.default_track
+        self.model_state = 2
+        self.entries = (
+            {entry.key: entry for entry in profile.entries}
+            if profile is not None
+            else {}
+        )
+        self.chunks: list[_BitChunkModel] = []
+        self.bits: Counter[str] = Counter()
+        self.hits: Counter[str] = Counter()
+        self.delta_widths: Counter[int] = Counter()
+        self.duration_widths: Counter[int] = Counter()
+        self.argument_widths: Counter[int] = Counter()
+        self.per_event: dict[int, Counter[str]] = {}
+
+    @property
+    def chunk(self) -> _BitChunkModel:
+        return self.chunks[-1]
+
+    def _start_chunk(self, item: CompactRecord | CompactClockSync) -> None:
+        base = (
+            item.counter_before
+            if isinstance(item, CompactClockSync)
+            else item.raw_timestamp
+        )
+        self.current_generation = item.generation
+        self.current_timestamp = base
+        self.current_track = self.trace.header.default_track
+        self.model_state = 2
+        self.chunks.append(_BitChunkModel(item.generation, base))
+
+    def _escape_width(self) -> int:
+        return (
+            self.profile.escape_codes[self.model_state][1]
+            if self.profile is not None
+            else 1
+        )
+
+    def _event_cost(self, record: CompactRecord) -> tuple[int, Counter[str], str]:
+        delta = (record.raw_timestamp - self.current_timestamp) & self.mask
+        duration_value = record.duration_ticks or 0
+        key = (
+            (self.model_state << 24)
+            | (record.event.id << 16)
+            | (delta << 8)
+            | duration_value
+        )
+        entry = (
+            self.entries.get(key)
+            if record.event.id <= 0xFF
+            and delta <= 0xFF
+            and duration_value <= 0xFF
+            else None
+        )
+        if (
+            entry is not None
+            and record.event.kind == "slice"
+            and not record.event.arguments
+            and record.track_id == self.current_track
+        ):
+            return entry.code_length, Counter(profile_code=entry.code_length), "profile_hit"
+        identity = (
+            8
+            if record.event.id in self.trace.schema.v3_event_opcodes
+            else 8 + _varint_width(record.event.id) * 8
+        )
+        delta_bits = _varint_width(delta) * 8
+        duration_bits = (
+            _varint_width(record.duration_ticks) * 8
+            if record.duration_ticks is not None
+            else 0
+        )
+        argument_bits = sum(
+            _argument_width(specification, value) * 8
+            for specification, value in zip(record.event.arguments, record.arguments)
+        )
+        track_bits = (
+            _varint_width(record.track_id) * 8
+            if record.track_id != self.current_track
+            else 0
+        )
+        attribution = Counter(
+            profile_prefix=self._escape_width(),
+            literal_kind=2,
+            event_identity=identity,
+            timestamp_delta=delta_bits,
+            duration=duration_bits,
+            arguments=argument_bits,
+            track_controls=track_bits,
+        )
+        return sum(attribution.values()), attribution, "profile_miss"
+
+    def _sync_cost(self, sync: CompactClockSync) -> tuple[int, Counter[str], str]:
+        body = sum(
+            _varint_width(value) * 8
+            for value in (
+                sync.generation,
+                sync.counter_before,
+                sync.counter_after,
+                sync.reference_timestamp_ns,
+                sync.uncertainty_ns,
+            )
+        )
+        attribution = Counter(
+            profile_prefix=self._escape_width(),
+            literal_kind=2,
+            clock_sync_controls=body,
+        )
+        return sum(attribution.values()), attribution, "clock_sync"
+
+    def _advance(self, record: CompactRecord) -> None:
+        if self.profile is None:
+            self.model_state = 2
+        elif record.event.id == self.profile.state_events[0]:
+            self.model_state = 0
+        elif record.event.id == self.profile.state_events[1]:
+            self.model_state = 1
+        else:
+            self.model_state = 2
+
+    def run(self, items: Iterable[CompactRecord | CompactClockSync]) -> Mapping[str, Any]:
+        capacity = PAYLOAD_BYTES * 8
+        for item in items:
+            if not self.chunks or item.generation != self.current_generation:
+                self._start_chunk(item)
+            cost, attribution, hit = (
+                self._sync_cost(item)
+                if isinstance(item, CompactClockSync)
+                else self._event_cost(item)
+            )
+            if cost > capacity - self.chunk.used_bits:
+                self._start_chunk(item)
+                cost, attribution, hit = (
+                    self._sync_cost(item)
+                    if isinstance(item, CompactClockSync)
+                    else self._event_cost(item)
+                )
+            if cost > capacity:
+                raise ValueError("compact logical record exceeds one chunk payload")
+            self.chunk.used_bits += cost
+            self.bits.update(attribution)
+            self.hits[hit] += 1
+            if isinstance(item, CompactClockSync):
+                self.chunk.syncs += 1
+                self.current_timestamp = _midpoint(
+                    item.counter_before, item.counter_after, self.mask
+                )
+            else:
+                expanded = 2 if item.event.kind == "slice" else 1
+                delta = (item.raw_timestamp - self.current_timestamp) & self.mask
+                self.delta_widths[_varint_width(delta)] += 1
+                if item.duration_ticks is not None:
+                    self.duration_widths[_varint_width(item.duration_ticks)] += 1
+                self.argument_widths.update(
+                    _argument_width(specification, value)
+                    for specification, value in zip(
+                        item.event.arguments, item.arguments
+                    )
+                )
+                self.chunk.records += 1
+                self.chunk.events += expanded
+                event = self.per_event.setdefault(item.event.id, Counter())
+                event["count"] += 1
+                event["events"] += expanded
+                event["bits"] += cost
+                self.current_timestamp = item.raw_timestamp
+                self.current_track = item.track_id
+                self._advance(item)
+        payload_bits = sum(chunk.used_bits for chunk in self.chunks)
+        payload_bytes = sum((chunk.used_bits + 7) // 8 for chunk in self.chunks)
+        container_bytes = FILE_HEADER_BYTES + len(self.chunks) * CHUNK_BYTES
+        records = sum(chunk.records for chunk in self.chunks)
+        events = sum(chunk.events for chunk in self.chunks)
+        syncs = sum(chunk.syncs for chunk in self.chunks)
+        overwritten_chunks = max(0, len(self.chunks) - self.chunk_count)
+        overwritten_records = sum(
+            chunk.records for chunk in self.chunks[:overwritten_chunks]
+        )
+        overwritten_events = sum(
+            chunk.events for chunk in self.chunks[:overwritten_chunks]
+        )
+        per_event = {
+            str(event_id): {
+                "name": self.trace.schema.events[event_id].name,
+                "count": values["count"],
+                "expanded_events": values["events"],
+                "total_bits": values["bits"],
+                "mean_bits": values["bits"] / values["count"],
+            }
+            for event_id, values in sorted(self.per_event.items())
+        }
+        return {
+            "format_version": 4,
+            "codec_profile_sha256": (
+                self.profile.sha256.hex() if self.profile is not None else "0" * 64
+            ),
+            "records": records,
+            "expanded_events": events,
+            "clock_syncs": syncs,
+            "payload_bits": payload_bits,
+            "payload_bytes": payload_bytes,
+            "container_bytes": container_bytes,
+            "bits_per_record": payload_bits / records if records else 0.0,
+            "bytes_per_record": payload_bytes / records if records else 0.0,
+            "records_per_payload_kib": records * 1024 / payload_bytes
+            if payload_bytes
+            else 0.0,
+            "events_per_payload_kib": events * 1024 / payload_bytes
+            if payload_bytes
+            else 0.0,
+            "chunks_started": len(self.chunks),
+            "chunk_wraps": overwritten_chunks,
+            "model_overwritten_records": overwritten_records,
+            "model_overwritten_events": overwritten_events,
+            "chunk_used_bits": [chunk.used_bits for chunk in self.chunks],
+            "chunk_used_lengths": [
+                (chunk.used_bits + 7) // 8 for chunk in self.chunks
+            ],
+            "chunk_slack_bits": len(self.chunks) * capacity - payload_bits,
+            "chunk_slack_bytes": len(self.chunks) * PAYLOAD_BYTES - payload_bytes,
+            "bit_attribution": dict(self.bits),
+            "special_opcode_hits": dict(self.hits),
+            "per_event": per_event,
+            "attribution": {
+                "file_header": FILE_HEADER_BYTES,
+                "chunk_headers": len(self.chunks) * CHUNK_HEADER_BYTES,
+                "payload": payload_bytes,
+                "chunk_slack": len(self.chunks) * PAYLOAD_BYTES - payload_bytes,
+                "unused_chunk_capacity": 0,
+            },
+            "varint_width_histograms": {
+                "timestamp_delta": dict(sorted(self.delta_widths.items())),
+                "duration": dict(sorted(self.duration_widths.items())),
+                "arguments": dict(sorted(self.argument_widths.items())),
+            },
+        }
+
+
 def model_compact_trace(
-    trace: CompactTrace, version: int, *, chunk_count: int | None = None
+    trace: CompactTrace,
+    version: int,
+    *,
+    chunk_count: int | None = None,
+    codec_profile: CompactCodecProfile | None = None,
 ) -> Mapping[str, Any]:
     """Model one logical capture using a selected compact wire version."""
-    if version not in (1, 2, 3):
-        raise ValueError("compact model version must be 1, 2, or 3")
+    if version not in (1, 2, 3, 4):
+        raise ValueError("compact model version must be 1, 2, 3, or 4")
     count = (
-        (trace.header.buffer_bytes - FILE_HEADER_BYTES) // CHUNK_BYTES
+        (
+            trace.header.buffer_bytes
+            - (FILE_HEADER_BYTES if trace.header.format_version == 4 else LEGACY_FILE_HEADER_BYTES)
+        )
+        // CHUNK_BYTES
         if chunk_count is None
         else chunk_count
     )
@@ -400,6 +673,8 @@ def model_compact_trace(
         *trace.clock_syncs,
     ]
     items.sort(key=lambda item: item.order)
+    if version == 4:
+        return _V4EncodingModel(trace, count, codec_profile).run(items)
     return _EncodingModel(trace, version, count).run(items)
 
 
@@ -408,28 +683,49 @@ def profile_compact_trace(
     schema: CompactSchema | Path | str,
     *,
     allow_unfinalized: bool = False,
+    codec_profile: CompactCodecProfile | Path | str | None = None,
 ) -> Mapping[str, Any]:
-    """Read one capture, replay all versions, and verify actual v2 chunk use."""
+    """Read one capture, replay all versions, and verify actual wire use."""
     producer_schema = (
         schema if isinstance(schema, CompactSchema) else CompactSchema.load(schema)
     )
+    resolved_profile = (
+        codec_profile
+        if isinstance(codec_profile, CompactCodecProfile)
+        else (
+            CompactCodecProfile.load(codec_profile, producer_schema)
+            if codec_profile is not None
+            else None
+        )
+    )
     reader = CompactTraceReader(
-        path, producer_schema, allow_unfinalized=allow_unfinalized
+        path,
+        producer_schema,
+        allow_unfinalized=allow_unfinalized,
+        codec_profile=resolved_profile,
     )
     trace = reader.read()
     models = {
-        f"v{version}": model_compact_trace(trace, version)
-        for version in (1, 2, 3)
+        f"v{version}": model_compact_trace(
+            trace, version, codec_profile=resolved_profile
+        )
+        for version in (1, 2, 3, 4)
     }
     actual_used = [chunk.used for chunk in reader._chunks]
     physical_chunk_count = (
-        trace.header.buffer_bytes - FILE_HEADER_BYTES
+        trace.header.buffer_bytes
+        - (
+            FILE_HEADER_BYTES
+            if trace.header.format_version == 4
+            else LEGACY_FILE_HEADER_BYTES
+        )
     ) // CHUNK_BYTES
     actual_chunks = [
         {
             "sequence": chunk.sequence,
             "physical_index": chunk.physical_index,
             "used": chunk.used,
+            "committed_bits": chunk.committed_bits,
             "slack": PAYLOAD_BYTES - chunk.used,
             "records": chunk.records,
             "expanded_events": chunk.events,
@@ -441,6 +737,11 @@ def profile_compact_trace(
     v2_prediction: bool | None = None
     if trace.header.format_version == 2 and not trace.header.ring_wrapped:
         v2_prediction = models["v2"]["chunk_used_lengths"] == actual_used
+    v4_prediction: bool | None = None
+    if trace.header.format_version == 4 and not trace.header.ring_wrapped:
+        v4_prediction = models["v4"]["chunk_used_bits"] == [
+            chunk.committed_bits for chunk in reader._chunks
+        ]
     actual_payload = sum(actual_used)
     return {
         "capture": str(Path(path)),
@@ -467,6 +768,11 @@ def profile_compact_trace(
             "chunks_started": chunks_started,
             "chunk_wraps": max(0, chunks_started - physical_chunk_count),
             "payload_bytes": actual_payload,
+            "payload_bits": (
+                sum(chunk.committed_bits or 0 for chunk in reader._chunks)
+                if trace.header.format_version == 4
+                else actual_payload * 8
+            ),
             "records": trace.header.retained_records,
             "expanded_events": trace.header.retained_events,
             "overwritten_records": trace.header.overwritten_records,
@@ -477,6 +783,7 @@ def profile_compact_trace(
             ),
         },
         "v2_prediction_matches_actual": v2_prediction,
+        "v4_prediction_matches_actual": v4_prediction,
         "models": models,
     }
 
@@ -494,7 +801,83 @@ def aggregate_density_reports(
     """Aggregate capture reports without hiding retained-only corpus inputs."""
     captures = list(reports)
     models: dict[str, Any] = {}
-    for version_name in ("v1", "v2", "v3"):
+    for version_name in ("v1", "v2", "v3", "v4"):
+        if version_name == "v4":
+            v4_totals: Counter[str] = Counter()
+            bit_attribution: Counter[str] = Counter()
+            container_attribution: Counter[str] = Counter()
+            v4_hits: Counter[str] = Counter()
+            v4_chunk_used_lengths: list[int] = []
+            chunk_used_bits: list[int] = []
+            per_event_bits: dict[str, Counter[str]] = {}
+            v4_histograms = {
+                "timestamp_delta": Counter[str](),
+                "duration": Counter[str](),
+                "arguments": Counter[str](),
+            }
+            for report in captures:
+                model = report["models"][version_name]
+                for key in (
+                    "records",
+                    "expanded_events",
+                    "clock_syncs",
+                    "payload_bits",
+                    "payload_bytes",
+                    "container_bytes",
+                    "chunks_started",
+                    "chunk_wraps",
+                    "model_overwritten_records",
+                    "model_overwritten_events",
+                    "chunk_slack_bits",
+                    "chunk_slack_bytes",
+                ):
+                    v4_totals[key] += int(model[key])
+                v4_chunk_used_lengths.extend(model["chunk_used_lengths"])
+                chunk_used_bits.extend(model["chunk_used_bits"])
+                _sum_integer_mapping(bit_attribution, model["bit_attribution"])
+                _sum_integer_mapping(container_attribution, model["attribution"])
+                _sum_integer_mapping(v4_hits, model["special_opcode_hits"])
+                for field_name, values in model["varint_width_histograms"].items():
+                    _sum_integer_mapping(v4_histograms[field_name], values)
+                for event_id, event in model["per_event"].items():
+                    v4_target = per_event_bits.setdefault(event_id, Counter())
+                    v4_target["count"] += int(event["count"])
+                    v4_target["expanded_events"] += int(event["expanded_events"])
+                    v4_target["total_bits"] += int(event["total_bits"])
+            records = v4_totals["records"]
+            payload_bytes = v4_totals["payload_bytes"]
+            models[version_name] = {
+                **dict(v4_totals),
+                "bits_per_record": v4_totals["payload_bits"] / records
+                if records
+                else 0.0,
+                "bytes_per_record": payload_bytes / records if records else 0.0,
+                "records_per_payload_kib": records * 1024 / payload_bytes
+                if payload_bytes
+                else 0.0,
+                "events_per_payload_kib": v4_totals["expanded_events"]
+                * 1024
+                / payload_bytes
+                if payload_bytes
+                else 0.0,
+                "chunk_used_lengths": v4_chunk_used_lengths,
+                "chunk_used_bits": chunk_used_bits,
+                "bit_attribution": dict(bit_attribution),
+                "attribution": dict(container_attribution),
+                "special_opcode_hits": dict(v4_hits),
+                "varint_width_histograms": {
+                    key: dict(sorted(values.items(), key=lambda item: int(item[0])))
+                    for key, values in v4_histograms.items()
+                },
+                "per_event": {
+                    event_id: {
+                        **dict(event),
+                        "mean_bits": event["total_bits"] / event["count"],
+                    }
+                    for event_id, event in per_event_bits.items()
+                },
+            }
+            continue
         totals: Counter[str] = Counter()
         attribution: Counter[str] = Counter()
         hits: Counter[str] = Counter()
@@ -512,6 +895,7 @@ def aggregate_density_reports(
                 "expanded_events",
                 "clock_syncs",
                 "payload_bytes",
+                "container_bytes",
                 "chunks_started",
                 "chunk_wraps",
                 "model_overwritten_records",
@@ -582,6 +966,11 @@ def aggregate_density_reports(
         for report in captures
         if report["v2_prediction_matches_actual"] is not None
     ]
+    verified_v4 = [
+        report["v4_prediction_matches_actual"]
+        for report in captures
+        if report["v4_prediction_matches_actual"] is not None
+    ]
     return {
         "captures": len(captures),
         "retained_only_captures": sum(
@@ -590,6 +979,8 @@ def aggregate_density_reports(
         ),
         "v2_predictions_verified": len(verified),
         "v2_predictions_all_match": all(verified) if verified else None,
+        "v4_predictions_verified": len(verified_v4),
+        "v4_predictions_all_match": all(verified_v4) if verified_v4 else None,
         "models": models,
     }
 
@@ -599,6 +990,7 @@ def profile_compact_corpus(
     schema: CompactSchema | Path | str,
     *,
     allow_unfinalized: bool = False,
+    codec_profile: CompactCodecProfile | Path | str | None = None,
 ) -> Mapping[str, Any]:
     """Profile several captures and return individual plus aggregate results."""
     producer_schema = (
@@ -606,7 +998,10 @@ def profile_compact_corpus(
     )
     reports = [
         profile_compact_trace(
-            path, producer_schema, allow_unfinalized=allow_unfinalized
+            path,
+            producer_schema,
+            allow_unfinalized=allow_unfinalized,
+            codec_profile=codec_profile,
         )
         for path in paths
     ]

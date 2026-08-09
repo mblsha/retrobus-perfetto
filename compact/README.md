@@ -17,7 +17,10 @@ Initialize a buffer before entering the measured workload:
 #include <retrobus/compact_trace.h>
 #include "trace_schema.h"
 
-static unsigned char trace_buffer[RBCT_FILE_HEADER_BYTES + 64 * RBCT_CHUNK_BYTES];
+static union {
+    uint32_t alignment;
+    unsigned char bytes[RBCT_FILE_HEADER_BYTES + 64 * RBCT_CHUNK_BYTES];
+} trace_buffer;
 static rbct_scope_t trace_scopes[16];
 static rbct_writer_t trace_writer;
 
@@ -30,7 +33,7 @@ static void start_trace(void) {
     config.schema_version = EXAMPLE_TRACE_SCHEMA_VERSION;
     for (unsigned i = 0; i < 32; ++i)
         config.schema_sha256[i] = EXAMPLE_TRACE_SCHEMA_SHA256[i];
-    rbct_writer_init(&trace_writer, trace_buffer, sizeof(trace_buffer),
+    rbct_writer_init(&trace_writer, trace_buffer.bytes, sizeof(trace_buffer.bytes),
                      trace_scopes, 16, &config);
 }
 ```
@@ -61,19 +64,32 @@ can retry; `rbct_writer_cancel()` explicitly discards the innermost scope.
 After the measurement, call `rbct_writer_finalize()` and export exactly
 `rbct_writer_size()` bytes beginning at `rbct_writer_data()`. Buffer allocation,
 locking, persistence, and transport deliberately remain producer policy.
-The buffer size must equal `RBCT_FILE_HEADER_BYTES` plus an integral number of
+The four-byte-aligned buffer size must equal `RBCT_FILE_HEADER_BYTES` plus an integral number of
 `RBCT_CHUNK_BYTES`; initialization rejects trailing partial chunks. The writer,
 buffer, scope storage, and configuration must not overlap.
 
-New captures use semantic-commit format v3. The generated schema header assigns
-ordinary opcodes to events in semantic-ID order and, where space remains,
-specialized delta-zero/one opcodes to no-argument instants. Each record body is
-copied while its opcode remains zero, then a publication barrier runs before
-the nonzero semantic opcode is stored last. Best-effort crash recovery therefore
-returns exactly a prefix of committed records without charging ordinary records
-a separate frame byte. The legacy generic begin/emit APIs remain valid through
-the extended-event opcode, but generated emitters provide the intended dense
-encoding.
+New captures use static-profile format v4. Train a profile outside the measured
+target from representative captures, then generate its read-only target tables:
+
+```sh
+python tools/compact_codec_profile.py capture-a.rbct capture-b.rbct \
+    --schema producer-schema.json --entry-limit 247 \
+    --output generated/trace-codec.json \
+    --c-header generated/trace_codec.h --c-prefix example_codec
+```
+
+Set `config.codec_profile = &EXAMPLE_CODEC_PROFILE` after including that header.
+The writer retains only the profile pointer and two model-state bits. A hot tuple
+uses a constant-time two-multiply perfect-hash lookup and appends a short static
+Huffman code; all misses use a lossless schema-shaped literal. The file binds
+the exact external profile by SHA-256. Leaving `codec_profile` null selects a
+literal-only v4 stream that needs no external profile.
+
+V4 publishes the payload bit cursor and record count with one aligned atomic
+32-bit store after the publication barrier. Best-effort crash recovery therefore
+returns exactly a prefix of committed records without a per-record marker.
+Generated emitters provide one-byte ordinary identities on escape paths; the
+generic begin/emit APIs remain valid through an extended semantic identity.
 
 ARMv7+, AArch64, RISC-V, and x86 receive a built-in store-publication barrier.
 Other targets, including ARMv5, must define
@@ -82,18 +98,27 @@ quiesce and synchronize the writer before copying. Platforms whose snapshot is
 not coherent with ordinary stores must also supply the appropriate persistence
 or cache-flush policy.
 
-A direct same-track slice with one-byte delta and duration is three bytes, so a
-4048-byte payload holds 1349 representative slices instead of v2's 1012. An
-eligible no-argument instant with delta zero or one is one byte and retains the
-4048-record capacity. The resource regressions lock in both capacities, cap the
-writer object at 136 bytes on 64-bit targets and 112 bytes on 32-bit targets,
-and keep each scope at 88 bytes. CI also caps ARMv5TE soft-float `-Os -ffixed-r9`
-writer text at 7000 bytes and reported stack at 192 bytes.
+A 4048-byte payload contains 32,384 profile bits. The resource regression fills
+it with 32,383 slices when the first tuple costs two bits and steady state costs
+one. Real density must be reported from corpus replay; historical host-clock
+Redux profiles are explicitly diagnostic and must not be used as production
+PXA profiles. The checksum-pinned implemented-wire replay, including the two
+literal-kind bits on every miss and separate payload/container totals, is in
+[`V4_CODEC_AUDIT.md`](V4_CODEC_AUDIT.md). The writer object remains capped at
+144 bytes on 64-bit targets
+and 120 bytes on 32-bit targets, while each scope remains at 88 bytes.
+The complete ARMv5TE soft-float `-Os -ffixed-r9` writer currently measures
+8360 bytes of text with 168 bytes maximum reported stack and no undefined
+symbols. CI gates it at 8500 bytes and 192 bytes respectively. The added text
+implements profile validation, CHD lookup, bit publication, and literal escape;
+the generated 128/247-entry profile occupies 936/1768 bytes of read-only ARM
+ROM including its hash-bound descriptor. The old 7000-byte text gate has not
+been restored; the 8500-byte budget requires explicit acceptance.
 
-Removing the v2 length envelope weakens arbitrary-corruption isolation for live,
-unchecksummed snapshots: a valid-looking corrupt body can disrupt the remainder
-of one chunk. It does not weaken interrupted-write publication. Finalized CRCs
-detect corruption, and chunk boundaries provide restart points every 4096 bytes.
+Bit packing weakens arbitrary-corruption isolation for live, unchecksummed
+snapshots: a valid-looking corrupt code can disrupt the remainder of one chunk.
+It does not weaken interrupted-write publication. Finalized CRCs detect
+corruption, and chunk boundaries provide restart points every 4096 bytes.
 
 Chunk reuse invalidates the leading magic byte before changing any retained
 contents, then publishes that byte last after the replacement header is ready.

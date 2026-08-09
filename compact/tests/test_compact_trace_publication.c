@@ -7,7 +7,7 @@ static uint8_t* watched_buffer;
 static rbct_writer_t* watched_writer;
 static int saw_invalidated_reused_chunk;
 static int saw_prepared_unpublished_chunk;
-static int saw_record_body_before_marker;
+static int saw_record_body_before_cursor;
 static int saw_finalized_without_crc;
 static int saw_chunk_crc_flag_before_chunk_crc;
 
@@ -35,17 +35,25 @@ static void test_publish_barrier(void) {
     }
   }
   if (chunk[0] == RBCT_CHUNK_MAGIC_0) {
-    const uint16_t used = rbct_get_u16(chunk, 28u);
-    const uint8_t* frame = chunk + RBCT_CHUNK_HEADER_BYTES + used;
-    if (used + 1u < RBCT_CHUNK_BYTES - RBCT_CHUNK_HEADER_BYTES &&
-        frame[0] == 0u && frame[1] != 0u) {
-      saw_record_body_before_marker = 1;
+    const uint16_t committed_bits = rbct_chunk_committed_bits(chunk);
+    const uint8_t* payload = chunk + RBCT_CHUNK_HEADER_BYTES;
+    size_t index;
+    for (index = (committed_bits + 7u) / 8u;
+         index < RBCT_CHUNK_BYTES - RBCT_CHUNK_HEADER_BYTES; ++index) {
+      if (payload[index] != 0u) {
+        saw_record_body_before_cursor = 1;
+        break;
+      }
     }
   }
 }
 
 int main(void) {
-  uint8_t buffer[RBCT_FILE_HEADER_BYTES + RBCT_CHUNK_BYTES];
+  union {
+    uint32_t alignment;
+    uint8_t bytes[RBCT_FILE_HEADER_BYTES + RBCT_CHUNK_BYTES];
+  } storage;
+  uint8_t* buffer = storage.bytes;
   rbct_writer_t writer;
   rbct_config_t config = {0};
   unsigned index;
@@ -55,7 +63,7 @@ int main(void) {
   config.clock_width_bits = 32u;
   watched_buffer = buffer;
   watched_writer = &writer;
-  if (rbct_writer_init(&writer, buffer, sizeof(buffer), NULL, 0u, &config) !=
+  if (rbct_writer_init(&writer, buffer, sizeof(storage.bytes), NULL, 0u, &config) !=
       RBCT_OK) {
     return 1;
   }
@@ -73,7 +81,7 @@ int main(void) {
   if (!saw_prepared_unpublished_chunk) {
     return 4;
   }
-  if (!saw_record_body_before_marker) {
+  if (!saw_record_body_before_cursor) {
     return 9;
   }
   if ((rbct_get_u16(buffer, 38u) & RBCT_FLAG_RING_WRAPPED) == 0u) {

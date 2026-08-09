@@ -19,6 +19,7 @@ from retrobus_perfetto.compact import (  # noqa: E402
     convert_compact_trace,
 )
 from retrobus_perfetto.compact_schema import CompactSchemaError  # noqa: E402
+from retrobus_perfetto.compact_codec import CompactCodecProfileError  # noqa: E402
 
 
 def main() -> int:
@@ -26,6 +27,11 @@ def main() -> int:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--schema", type=Path, required=True)
+    parser.add_argument(
+        "--codec-profile",
+        type=Path,
+        help="external static codec profile required by profiled RBCTRC4 captures",
+    )
     parser.add_argument("--normalize-start", action="store_true")
     parser.add_argument(
         "--allow-unfinalized",
@@ -40,8 +46,9 @@ def main() -> int:
             args.output,
             normalize_start=args.normalize_start,
             allow_unfinalized=args.allow_unfinalized,
+            codec_profile=args.codec_profile,
         )
-    except (CompactTraceError, CompactSchemaError) as error:
+    except (CompactTraceError, CompactSchemaError, CompactCodecProfileError) as error:
         parser.error(str(error))
     print(json.dumps(summary, sort_keys=True))
     return 0
