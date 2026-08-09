@@ -36,6 +36,12 @@
 #define RBCT_FRAME_INLINE_ONE_BASE (RBCT_FRAME_INLINE_ZERO_BASE + 22u)
 #define RBCT_INLINE_EVENT_ID_MAX 21u
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#define RBCT_NO_VECTOR __pragma(loop(no_vector))
+#else
+#define RBCT_NO_VECTOR
+#endif
+
 #ifndef RBCT_PLATFORM_PUBLISH_BARRIER
 #if defined(_MSC_VER) && defined(_M_ARM)
 #define RBCT_PLATFORM_PUBLISH_BARRIER() __dmb(_ARM_BARRIER_SY)
@@ -67,6 +73,7 @@ static void rbct_zero(uint8_t* destination, size_t size) {
   uint8_t* output = destination;
 #endif
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < size; ++index) {
     output[index] = 0;
   }
@@ -81,6 +88,7 @@ static void rbct_copy(uint8_t* destination,
   uint8_t* output = destination;
 #endif
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < size; ++index) {
     output[index] = source[index];
   }
@@ -93,6 +101,7 @@ static void rbct_put_u16(uint8_t* destination, size_t offset, uint16_t value) {
 
 static void rbct_put_u32(uint8_t* destination, size_t offset, uint32_t value) {
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < 4u; ++index) {
     destination[offset + index] = (uint8_t)((value >> (index * 8u)) & 0xffu);
   }
@@ -100,6 +109,7 @@ static void rbct_put_u32(uint8_t* destination, size_t offset, uint32_t value) {
 
 static void rbct_put_u64(uint8_t* destination, size_t offset, uint64_t value) {
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < 8u; ++index) {
     destination[offset + index] = (uint8_t)((value >> (index * 8u)) & 0xffu);
   }
@@ -113,6 +123,7 @@ static uint16_t rbct_get_u16(const uint8_t* source, size_t offset) {
 static uint32_t rbct_get_u32(const uint8_t* source, size_t offset) {
   uint32_t value = 0;
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < 4u; ++index) {
     value |= (uint32_t)source[offset + index] << (index * 8u);
   }
@@ -122,9 +133,11 @@ static uint32_t rbct_get_u32(const uint8_t* source, size_t offset) {
 static uint32_t rbct_crc32(const uint8_t* source, size_t size) {
   uint32_t crc = 0xffffffffu;
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < size; ++index) {
     unsigned bit;
     crc ^= source[index];
+    RBCT_NO_VECTOR
     for (bit = 0; bit < 8u; ++bit) {
       const uint32_t mask = (uint32_t)-(int32_t)(crc & 1u);
       crc = (crc >> 1u) ^ (0xedb88320u & mask);
@@ -137,6 +150,7 @@ static uint32_t rbct_final_header_crc32(const uint8_t* source,
                                         uint16_t final_flags) {
   uint32_t crc = 0xffffffffu;
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < RBCT_FILE_HEADER_BYTES; ++index) {
     uint8_t byte = source[index];
     unsigned bit;
@@ -148,6 +162,7 @@ static uint32_t rbct_final_header_crc32(const uint8_t* source,
       byte = 0u;
     }
     crc ^= byte;
+    RBCT_NO_VECTOR
     for (bit = 0; bit < 8u; ++bit) {
       const uint32_t mask = (uint32_t)-(int32_t)(crc & 1u);
       crc = (crc >> 1u) ^ (0xedb88320u & mask);
@@ -174,6 +189,7 @@ static void rbct_append_fixed64(uint8_t* destination,
                                 size_t* size,
                                 uint64_t value) {
   size_t index;
+  RBCT_NO_VECTOR
   for (index = 0; index < 8u; ++index) {
     destination[(*size)++] = (uint8_t)((value >> (index * 8u)) & 0xffu);
   }
@@ -234,6 +250,7 @@ static int rbct_arguments_valid(const rbct_argument_t* arguments,
       (argument_count != 0u && arguments == NULL)) {
     return 0;
   }
+  RBCT_NO_VECTOR
   for (index = 0; index < argument_count; ++index) {
     if (arguments[index].encoding != RBCT_ARGUMENT_ULEB128 &&
         arguments[index].encoding != RBCT_ARGUMENT_FIXED64) {
@@ -359,6 +376,7 @@ static uint8_t rbct_encode_event(const rbct_writer_t* writer,
   if (has_duration) {
     rbct_append_varint(encoded, encoded_size, duration);
   }
+  RBCT_NO_VECTOR
   for (index = 0; index < argument_count; ++index) {
     if (arguments[index].encoding == RBCT_ARGUMENT_ULEB128) {
       rbct_append_varint(encoded, encoded_size, arguments[index].bits);
@@ -551,6 +569,7 @@ rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
   scope->track_id = track_id;
   scope->event_id = event_id;
   scope->argument_count = (uint8_t)argument_count;
+  RBCT_NO_VECTOR
   for (index = 0; index < argument_count; ++index) {
     scope->arguments[index].bits = arguments[index].bits;
     scope->arguments[index].encoding = arguments[index].encoding;
@@ -692,6 +711,7 @@ rbct_status_t rbct_writer_finalize(rbct_writer_t* writer) {
       writer->next_sequence > writer->chunk_count) {
     flags |= RBCT_FLAG_RING_WRAPPED;
   }
+  RBCT_NO_VECTOR
   for (index = 0; index < writer->chunk_count; ++index) {
     uint8_t* chunk = rbct_chunk(writer, index);
     if (chunk[0] == RBCT_CHUNK_MAGIC_0 && chunk[1] == RBCT_CHUNK_MAGIC_1 &&
