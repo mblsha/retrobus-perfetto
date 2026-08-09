@@ -28,6 +28,9 @@ EVENT_KINDS = frozenset(
     )
 )
 TRACK_KINDS = frozenset(("thread", "counter"))
+V3_FIRST_EVENT_OPCODE = 0x01
+V3_LAST_EVENT_OPCODE = 0xFB
+V3_EXTENDED_EVENT_OPCODE = 0xFF
 
 
 class CompactSchemaError(ValueError):
@@ -450,6 +453,34 @@ class CompactSchema:
             canonical_json=canonical,
         )
 
+    @property
+    def v3_event_opcodes(self) -> Mapping[int, int]:
+        """Return the deterministic v3 ordinary opcode for each direct event."""
+        direct_events = sorted(self.events)[:V3_LAST_EVENT_OPCODE]
+        return MappingProxyType(
+            {
+                event_id: V3_FIRST_EVENT_OPCODE + index
+                for index, event_id in enumerate(direct_events)
+            }
+        )
+
+    @property
+    def v3_inline_opcodes(self) -> Mapping[int, tuple[int, int]]:
+        """Return schema-derived delta-zero/one opcodes for minimal instants."""
+        direct_count = min(len(self.events), V3_LAST_EVENT_OPCODE)
+        available = iter(range(V3_FIRST_EVENT_OPCODE + direct_count, 0xFC))
+        result: dict[int, tuple[int, int]] = {}
+        for event in sorted(self.events.values(), key=lambda item: item.id):
+            if event.kind != "instant" or event.arguments:
+                continue
+            try:
+                delta_zero = next(available)
+                delta_one = next(available)
+            except StopIteration:
+                break
+            result[event.id] = (delta_zero, delta_one)
+        return MappingProxyType(result)
+
 
 def _c_identifier(value: str, fallback: str | None = None) -> str:
     identifier = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_").upper()
@@ -542,12 +573,29 @@ def render_c_schema_header(schema: CompactSchema, prefix: str | None = None) -> 
     lines.extend(("    default:", "      return -1;", "  }", "}"))
     events = sorted(schema.events.values(), key=lambda item: item.id)
     event_symbols = _unique_c_symbols(events)
+    event_opcodes = schema.v3_event_opcodes
+    inline_opcodes = schema.v3_inline_opcodes
     for event in events:
         event_symbol = event_symbols[event.id]
         lines.append(
             f"#define {symbol}_TRACE_EVENT_{event_symbol} "
             f"UINT32_C({event.id})"
         )
+        opcode = event_opcodes.get(event.id, V3_EXTENDED_EVENT_OPCODE)
+        lines.append(
+            f"#define {symbol}_TRACE_OPCODE_{event_symbol} "
+            f"UINT8_C({opcode})"
+        )
+        inline = inline_opcodes.get(event.id)
+        if inline is not None:
+            lines.append(
+                f"#define {symbol}_TRACE_OPCODE_{event_symbol}_DELTA_ZERO "
+                f"UINT8_C({inline[0]})"
+            )
+            lines.append(
+                f"#define {symbol}_TRACE_OPCODE_{event_symbol}_DELTA_ONE "
+                f"UINT8_C({inline[1]})"
+            )
     for event in events:
         event_symbol = event_symbols[event.id]
         operation = "BEGIN" if event.kind == "slice" else "EMIT"
@@ -628,7 +676,9 @@ def render_c_schema_header(schema: CompactSchema, prefix: str | None = None) -> 
         else:
             call_arguments = "NULL, 0u"
         writer_function = (
-            "rbct_writer_begin" if event.kind == "slice" else "rbct_writer_emit"
+            "rbct_writer_begin_opcode"
+            if event.kind == "slice"
+            else "rbct_writer_emit_opcode"
         )
         lines.append(
             f"  return {writer_function}("
@@ -636,6 +686,18 @@ def render_c_schema_header(schema: CompactSchema, prefix: str | None = None) -> 
         lines.append(
             f"      writer, timestamp, track_id, {symbol}_TRACE_EVENT_{event_symbol},"
         )
+        lines.append(f"      {symbol}_TRACE_OPCODE_{event_symbol},")
+        if event.kind != "slice":
+            inline = inline_opcodes.get(event.id)
+            if inline is None:
+                lines.append("      UINT8_C(0), UINT8_C(0),")
+            else:
+                lines.append(
+                    f"      {symbol}_TRACE_OPCODE_{event_symbol}_DELTA_ZERO,"
+                )
+                lines.append(
+                    f"      {symbol}_TRACE_OPCODE_{event_symbol}_DELTA_ONE,"
+                )
         lines.append(f"      {call_arguments});")
         lines.append("}")
     hash_bytes = ", ".join(f"0x{byte:02x}" for byte in schema.sha256)

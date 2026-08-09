@@ -24,11 +24,13 @@ from .compact_schema import (
 
 RBCT_MAGIC_V1 = b"RBCTRC1\0"
 RBCT_MAGIC_V2 = b"RBCTRC2\0"
-RBCT_MAGIC = RBCT_MAGIC_V2
-RBCT_MAGICS = frozenset((RBCT_MAGIC_V1, RBCT_MAGIC_V2))
+RBCT_MAGIC_V3 = b"RBCTRC3\0"
+RBCT_MAGIC = RBCT_MAGIC_V3
+RBCT_MAGICS = frozenset((RBCT_MAGIC_V1, RBCT_MAGIC_V2, RBCT_MAGIC_V3))
 RBCT_CHUNK_MAGIC = b"RBCK"
 LEGACY_FORMAT_VERSION = 1
-FORMAT_VERSION = 2
+FRAMED_FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 FILE_HEADER_BYTES = 160
 CHUNK_HEADER_BYTES = 48
 CHUNK_BYTES = 4096
@@ -83,15 +85,11 @@ class CompactTraceHeader:
 
     @property
     def format_version(self) -> int:
-        return (
-            FORMAT_VERSION
-            if self.source_format.endswith("v2")
-            else LEGACY_FORMAT_VERSION
-        )
+        return int(self.source_format.rsplit("v", 1)[1])
 
     @property
     def strict_clock(self) -> bool:
-        return self.format_version >= FORMAT_VERSION
+        return self.format_version >= FRAMED_FORMAT_VERSION
 
     @property
     def retained_records(self) -> int:
@@ -494,6 +492,7 @@ def _decode_one_record(
     strict: bool,
     implicit_delta: int | None = None,
     inline_event_id: int | None = None,
+    allow_small_explicit_delta: bool = False,
 ) -> tuple[CompactRecord | CompactClockSync, int, int, int]:
     mask = (1 << clock_width_bits) - 1
     half_range = 1 << (clock_width_bits - 1)
@@ -570,7 +569,7 @@ def _decode_one_record(
             raise CompactTraceError(f"unknown compact event ID {event_id}")
         if implicit_delta is None:
             delta, offset = _read_varint(data, offset, limit, canonical=strict)
-            if strict and delta <= 1:
+            if strict and delta <= 1 and not allow_small_explicit_delta:
                 raise CompactTraceError(
                     "event uses a non-canonical explicit timestamp delta"
                 )
@@ -626,6 +625,128 @@ def _decode_one_record(
     raise CompactTraceError(f"chunk {chunk.sequence} ends after a track selection")
 
 
+def _decode_v3_record(
+    data: bytes,
+    offset: int,
+    limit: int,
+    *,
+    committed_opcode: int,
+    chunk: _Chunk,
+    schema: CompactSchema,
+    event_by_opcode: Mapping[int, int],
+    inline_by_opcode: Mapping[int, tuple[int, int]],
+    clock_width_bits: int,
+    timestamp: int,
+    track_id: int,
+    order: int,
+) -> tuple[CompactRecord | CompactClockSync, int, int, int]:
+    """Decode one v3 opcode whose body was published before its first byte."""
+    mask = (1 << clock_width_bits) - 1
+    half_range = 1 << (clock_width_bits - 1)
+    semantic_opcode = committed_opcode
+    if committed_opcode == CONTROL_TRACK:
+        selected, offset = _read_varint(data, offset, limit, canonical=True)
+        if selected == track_id:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} has a non-canonical track wrapper"
+            )
+        if selected not in schema.tracks:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} selects unknown track {selected}"
+            )
+        if offset >= limit:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} ends inside a track wrapper"
+            )
+        track_id = selected
+        semantic_opcode = data[offset]
+        offset += 1
+        if semantic_opcode == 0 or semantic_opcode in {
+            CONTROL_LOSS,
+            CONTROL_CLOCK_SYNC,
+            CONTROL_TRACK,
+        }:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} nests a control opcode in a track wrapper"
+            )
+    elif committed_opcode == CONTROL_CLOCK_SYNC:
+        generation, offset = _read_varint(data, offset, limit, canonical=True)
+        before, offset = _read_varint(data, offset, limit, canonical=True)
+        after, offset = _read_varint(data, offset, limit, canonical=True)
+        reference_ns, offset = _read_varint(data, offset, limit, canonical=True)
+        uncertainty_ns, offset = _read_varint(data, offset, limit, canonical=True)
+        if generation != chunk.generation:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} clock sync generation mismatch"
+            )
+        if before & ~mask or after & ~mask:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} clock sync exceeds counter width"
+            )
+        if ((after - before) & mask) >= half_range:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} clock sync interval is ambiguous"
+            )
+        midpoint = _midpoint_counter(before, after, mask)
+        return (
+            CompactClockSync(
+                generation,
+                before,
+                after,
+                reference_ns,
+                uncertainty_ns,
+                order,
+            ),
+            offset,
+            midpoint,
+            track_id,
+        )
+    elif committed_opcode == CONTROL_LOSS:
+        raise CompactTraceError("loss control is reserved")
+
+    implicit = inline_by_opcode.get(semantic_opcode)
+    if implicit is not None:
+        event_id, delta = implicit
+        return _decode_one_record(
+            data,
+            offset,
+            limit,
+            chunk=chunk,
+            schema=schema,
+            clock_width_bits=clock_width_bits,
+            timestamp=timestamp,
+            track_id=track_id,
+            order=order,
+            strict=True,
+            implicit_delta=delta,
+            inline_event_id=event_id,
+        )
+
+    if semantic_opcode == CONTROL_EXTENDED_EVENT:
+        event_id, offset = _read_varint(data, offset, limit, canonical=True)
+    else:
+        event_id = event_by_opcode.get(semantic_opcode, -1)
+        if event_id < 0:
+            raise CompactTraceError(
+                f"chunk {chunk.sequence} uses unknown schema opcode "
+                f"0x{semantic_opcode:02x}"
+            )
+    return _decode_one_record(
+        data,
+        offset,
+        limit,
+        chunk=chunk,
+        schema=schema,
+        clock_width_bits=clock_width_bits,
+        timestamp=timestamp,
+        track_id=track_id,
+        order=order,
+        strict=True,
+        inline_event_id=event_id,
+        allow_small_explicit_delta=True,
+    )
+
+
 class CompactTraceReader:
     """Scan chunk headers first, then decode bounded payloads in sequence order."""
 
@@ -669,9 +790,18 @@ class CompactTraceReader:
                 )
                 chunk_bytes = struct.unpack_from("<I", raw_header, 16)[0]
                 if (
-                    version not in (LEGACY_FORMAT_VERSION, FORMAT_VERSION)
+                    version
+                    not in (
+                        LEGACY_FORMAT_VERSION,
+                        FRAMED_FORMAT_VERSION,
+                        FORMAT_VERSION,
+                    )
                     or magic
-                    != (RBCT_MAGIC_V2 if version == FORMAT_VERSION else RBCT_MAGIC_V1)
+                    != {
+                        LEGACY_FORMAT_VERSION: RBCT_MAGIC_V1,
+                        FRAMED_FORMAT_VERSION: RBCT_MAGIC_V2,
+                        FORMAT_VERSION: RBCT_MAGIC_V3,
+                    }[version]
                     or header_bytes != FILE_HEADER_BYTES
                     or chunk_header_bytes != CHUNK_HEADER_BYTES
                     or chunk_bytes != CHUNK_BYTES
@@ -693,12 +823,12 @@ class CompactTraceReader:
                         "version 1 compact trace declares version 2 chunk-header CRCs"
                     )
                 if (
-                    version == FORMAT_VERSION
+                    version >= FRAMED_FORMAT_VERSION
                     and flags & FLAG_FINALIZED
                     and not flags & FLAG_CHUNK_HEADER_CRC
                 ):
                     raise CompactTraceError(
-                        "finalized version 2 compact trace lacks chunk-header CRCs"
+                        "finalized compact trace lacks chunk-header CRCs"
                     )
                 if flags & FLAG_FINALIZED:
                     if actual_crc != expected_crc:
@@ -792,7 +922,9 @@ class CompactTraceReader:
                             raise CompactTraceError(
                                 f"chunk {sequence} header CRC mismatch"
                             )
-                    elif final_reserved != 0:
+                    elif final_reserved != 0 and not (
+                        recovering and version == FORMAT_VERSION
+                    ):
                         crc_header = bytearray(chunk_header)
                         struct.pack_into("<I", crc_header, 44, 0)
                         actual_chunk_header_crc = zlib.crc32(crc_header) & 0xFFFF_FFFF
@@ -821,7 +953,7 @@ class CompactTraceReader:
                         raise CompactTraceError(
                             f"chunk {sequence} reserved fields are nonzero"
                         )
-                    if version == FORMAT_VERSION and base & ~mask:
+                    if version >= FRAMED_FORMAT_VERSION and base & ~mask:
                         if recovering:
                             continue
                         raise CompactTraceError(
@@ -920,12 +1052,23 @@ class CompactTraceReader:
         retained_records = 0
         retained_events = 0
         strict = self.header.strict_clock
+        format_version = self.header.format_version
         recover = self.allow_unfinalized and not self.header.finalized
+        event_by_opcode = {
+            opcode: event_id
+            for event_id, opcode in self.schema.v3_event_opcodes.items()
+        }
+        inline_by_opcode = {
+            opcode: (event_id, delta)
+            for event_id, opcodes in self.schema.v3_inline_opcodes.items()
+            for delta, opcode in enumerate(opcodes)
+        }
+        stop_recovery = False
         try:
             with self.path.open("rb") as source:
                 if self._identity(source) != self._file_identity:
                     raise CompactTraceError("compact trace changed while being read")
-                for chunk in self._chunks:
+                for chunk_index, chunk in enumerate(self._chunks):
                     source.seek(
                         FILE_HEADER_BYTES
                         + chunk.physical_index * CHUNK_BYTES
@@ -971,7 +1114,7 @@ class CompactTraceReader:
                             chunk_records += 1
                             chunk_events += 2 if item.event.kind == "slice" else 1
 
-                    if strict:
+                    if format_version == FRAMED_FORMAT_VERSION:
                         while offset < len(payload):
                             if len(payload) - offset < RECORD_FRAME_BYTES:
                                 if recover:
@@ -1045,6 +1188,36 @@ class CompactTraceReader:
                             yield item
                             order += 1
                             offset = frame_end
+                    elif format_version == FORMAT_VERSION:
+                        while offset < len(payload):
+                            committed_opcode = payload[offset]
+                            if committed_opcode == 0 and recover:
+                                stop_recovery = chunk_index == len(self._chunks) - 1
+                                break
+                            offset += RECORD_FRAME_BYTES
+                            try:
+                                item, offset, timestamp, track_id = _decode_v3_record(
+                                    payload,
+                                    offset,
+                                    len(payload),
+                                    committed_opcode=committed_opcode,
+                                    chunk=chunk,
+                                    schema=self.schema,
+                                    event_by_opcode=event_by_opcode,
+                                    inline_by_opcode=inline_by_opcode,
+                                    clock_width_bits=self.header.clock_width_bits,
+                                    timestamp=timestamp,
+                                    track_id=track_id,
+                                    order=order,
+                                )
+                            except CompactTraceError:
+                                if recover:
+                                    stop_recovery = True
+                                    break
+                                raise
+                            account(item)
+                            yield item
+                            order += 1
                     else:
                         while offset < len(payload):
                             try:
@@ -1077,6 +1250,8 @@ class CompactTraceReader:
                         )
                     retained_records += chunk_records
                     retained_events += chunk_events
+                    if stop_recovery:
+                        break
                 if self._identity(source) != self._file_identity:
                     raise CompactTraceError("compact trace changed while being read")
         except OSError as error:

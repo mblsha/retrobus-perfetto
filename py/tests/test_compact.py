@@ -141,7 +141,7 @@ def _refresh_header_checksums(image: bytearray) -> None:
 
 
 def _rbct_image(schema: CompactSchema, *, version: int = 2) -> bytes:
-    encoded_records = [
+    legacy_records = [
         bytes([0xFD])
         + _uleb(7)
         + _uleb(100)
@@ -160,11 +160,29 @@ def _rbct_image(schema: CompactSchema, *, version: int = 2) -> bytes:
         + _uleb(10)
         + struct.pack("<Q", 0xDEAD_BEEF_1234_5678),
     ]
-    payload = bytearray(
-        b"".join(_frame(record) for record in encoded_records)
-        if version == 2
-        else b"".join(encoded_records)
-    )
+    v3_records = [
+        bytes([0xFD])
+        + _uleb(7)
+        + _uleb(100)
+        + _uleb(102)
+        + _uleb(1_000_000)
+        + _uleb(300),
+        bytes([1]) + _uleb(49) + _uleb(40) + _uleb(42),
+        bytes([2]) + _uleb(10) + _uleb(_zigzag(-7)),
+        bytes([0xFE, 1, 3]) + _uleb(10) + _uleb(99),
+        bytes([0xFE, 0, 4]) + _uleb(10) + _uleb(123),
+        bytes([5]) + _uleb(10) + _uleb(123),
+        bytes([6]) + _uleb(10) + _uleb(8) + _uleb(1024),
+        bytes([7]) + _uleb(20) + _uleb(8) + _uleb(_zigzag(0)),
+        bytes([8]) + _uleb(10) + struct.pack("<Q", 0xDEAD_BEEF_1234_5678),
+    ]
+    if version == 3:
+        payload = bytearray(b"".join(v3_records))
+    elif version == 2:
+        payload = bytearray(b"".join(_frame(record) for record in legacy_records))
+    else:
+        legacy_records[1] = bytes([1]) + _uleb(50) + _uleb(40) + _uleb(42)
+        payload = bytearray(b"".join(legacy_records))
 
     chunk = bytearray(4096)
     chunk[:4] = b"RBCK"
@@ -184,13 +202,13 @@ def _rbct_image(schema: CompactSchema, *, version: int = 2) -> bytes:
         zlib.crc32(payload) & 0xFFFF_FFFF,
     )
     chunk[48 : 48 + len(payload)] = payload
-    if version == 2:
+    if version >= 2:
         struct.pack_into("<I", chunk, 44, 0)
         struct.pack_into("<I", chunk, 44, zlib.crc32(chunk[:48]) & 0xFFFF_FFFF)
 
     header = bytearray(160)
-    header[:8] = b"RBCTRC2\0" if version == 2 else b"RBCTRC1\0"
-    flags = 5 if version == 2 else 1
+    header[:8] = {1: b"RBCTRC1\0", 2: b"RBCTRC2\0", 3: b"RBCTRC3\0"}[version]
+    flags = 5 if version >= 2 else 1
     struct.pack_into(
         "<HHHHIQQHHII",
         header,
@@ -212,6 +230,79 @@ def _rbct_image(schema: CompactSchema, *, version: int = 2) -> bytes:
     struct.pack_into("<QQQQQQII", header, 96, 8, 0, 0, 9, 0, 4256, 7, 0)
     struct.pack_into("<I", header, 152, 0)
     struct.pack_into("<I", header, 152, zlib.crc32(header) & 0xFFFF_FFFF)
+    return bytes(header + chunk)
+
+
+def _v3_payload_image(
+    schema: CompactSchema,
+    payload: bytes,
+    *,
+    records: int,
+    events: int,
+    syncs: int = 0,
+    base_timestamp: int = 0,
+    generation: int = 0,
+    default_track: int = 0,
+    finalized: bool = True,
+    advertised_used: int | None = None,
+) -> bytes:
+    assert len(payload) <= 4096 - 48
+    used = len(payload) if advertised_used is None else advertised_used
+    chunk = bytearray(4096)
+    chunk[:4] = b"RBCK"
+    struct.pack_into(
+        "<QQIIHHIHHI",
+        chunk,
+        4,
+        0,
+        base_timestamp,
+        generation,
+        default_track,
+        used,
+        records,
+        events,
+        syncs,
+        0,
+        zlib.crc32(payload) & 0xFFFF_FFFF if finalized else 0,
+    )
+    chunk[48 : 48 + len(payload)] = payload
+    if finalized:
+        struct.pack_into("<I", chunk, 44, zlib.crc32(chunk[:48]) & 0xFFFF_FFFF)
+
+    header = bytearray(160)
+    header[:8] = b"RBCTRC3\0"
+    struct.pack_into(
+        "<HHHHIQQHHII",
+        header,
+        8,
+        3,
+        160,
+        48,
+        0,
+        4096,
+        1_000_000,
+        1,
+        32,
+        5 if finalized else 0,
+        schema.producer_id,
+        schema.version,
+    )
+    header[48:80] = schema.sha256
+    struct.pack_into(
+        "<QQQQQQII",
+        header,
+        96,
+        records,
+        0,
+        0,
+        events,
+        0,
+        4256,
+        generation,
+        default_track,
+    )
+    if finalized:
+        struct.pack_into("<I", header, 152, zlib.crc32(header) & 0xFFFF_FFFF)
     return bytes(header + chunk)
 
 
@@ -242,6 +333,8 @@ def test_schema_hash_and_header_are_deterministic(schema: CompactSchema) -> None
     header = render_c_schema_header(schema, "demo")
     assert "DEMO_TRACE_EVENT_WORK UINT32_C(1)" in header
     assert "DEMO_TRACE_EVENT_ADDRESS UINT32_C(300)" in header
+    assert "DEMO_TRACE_OPCODE_WORK UINT8_C(1)" in header
+    assert "DEMO_TRACE_OPCODE_ADDRESS UINT8_C(8)" in header
     assert "DEMO_TRACE_EVENT_REQUEST_4 UINT32_C(4)" in header
     assert "DEMO_TRACE_EVENT_REQUEST_5 UINT32_C(5)" in header
     assert "DEMO_TRACE_BEGIN_WORK(" in header
@@ -379,6 +472,64 @@ def test_read_and_reconstruct_all_generic_event_kinds(
     assert counters[0].categories == ["storage"]
     assert counters[0].debug_annotations[0].name == "value"
     assert counters[0].debug_annotations[0].uint_value == 99
+
+
+def test_v1_v2_v3_fixtures_reconstruct_identical_semantics(
+    tmp_path: Path, schema: CompactSchema
+) -> None:
+    traces = []
+    rows = []
+    for version in (1, 2, 3):
+        path = tmp_path / f"capture-v{version}.rbct"
+        path.write_bytes(_rbct_image(schema, version=version))
+        trace = read_compact_trace(path, schema)
+        traces.append(trace)
+        rows.append(_event_rows(compact_trace_to_builder(trace)))
+
+    assert [trace.header.format_version for trace in traces] == [1, 2, 3]
+    assert [
+        (
+            record.event.id,
+            record.generation,
+            record.track_id,
+            record.raw_timestamp,
+            record.duration_ticks,
+            record.arguments,
+        )
+        for record in traces[0].records
+    ] == [
+        (
+            record.event.id,
+            record.generation,
+            record.track_id,
+            record.raw_timestamp,
+            record.duration_ticks,
+            record.arguments,
+        )
+        for record in traces[2].records
+    ]
+    assert rows[0] == rows[1] == rows[2]
+
+
+def test_v3_schema_opcode_map_is_dense_and_assigns_inline_pairs() -> None:
+    mapping = _schema_mapping()
+    events = mapping["events"]
+    assert isinstance(events, list)
+    events.append(
+        {
+            "id": 229,
+            "name": "screen mutation",
+            "category": "display",
+            "kind": "instant",
+            "arguments": [],
+        }
+    )
+    schema = CompactSchema.from_mapping(mapping)
+
+    assert schema.v3_event_opcodes[1] == 1
+    assert schema.v3_event_opcodes[229] == 8
+    assert schema.v3_event_opcodes[300] == 9
+    assert schema.v3_inline_opcodes[229] == (10, 11)
 
 
 def test_crc_corruption_is_rejected(tmp_path: Path, schema: CompactSchema) -> None:
@@ -662,6 +813,289 @@ def test_v2_reserved_frame_marker_is_rejected(
     for recover in (False, True):
         with pytest.raises(CompactTraceError, match="invalid record frame"):
             read_compact_trace(path, schema, allow_unfinalized=recover)
+
+
+@pytest.mark.parametrize(
+    ("committed_opcode", "body"),
+    [
+        (2, bytes([2, 1, 42])),
+        (0xFE, bytes([1, 4, 2, 99])),
+    ],
+)
+def test_v3_recovery_is_exact_at_every_record_body_store(
+    tmp_path: Path, committed_opcode: int, body: bytes
+) -> None:
+    mapping = _schema_mapping()
+    events = mapping["events"]
+    assert isinstance(events, list)
+    events.append(
+        {
+            "id": 0,
+            "name": "zero",
+            "category": "audit",
+            "kind": "instant",
+            "arguments": [],
+        }
+    )
+    schema = CompactSchema.from_mapping(mapping)
+    inline_zero = schema.v3_inline_opcodes[0][0]
+
+    for stored_body_bytes in range(len(body) + 1):
+        payload = bytes([inline_zero, 0]) + body[:stored_body_bytes]
+        path = tmp_path / f"interrupted-{committed_opcode}-{stored_body_bytes}.rbct"
+        path.write_bytes(
+            _v3_payload_image(
+                schema,
+                payload,
+                records=1,
+                events=1,
+                finalized=False,
+                advertised_used=1,
+            )
+        )
+        trace = read_compact_trace(path, schema, allow_unfinalized=True)
+        assert [record.event.id for record in trace.records] == [0]
+
+    committed = bytes([inline_zero, committed_opcode]) + body
+    path = tmp_path / f"committed-{committed_opcode}.rbct"
+    path.write_bytes(
+        _v3_payload_image(
+            schema,
+            committed,
+            records=1,
+            events=1,
+            finalized=False,
+            advertised_used=1,
+        )
+    )
+    trace = read_compact_trace(path, schema, allow_unfinalized=True)
+    assert len(trace.records) == 2
+
+
+def test_v3_recovery_stops_globally_at_an_invalid_committed_opcode(
+    tmp_path: Path,
+) -> None:
+    mapping = _schema_mapping()
+    events = mapping["events"]
+    assert isinstance(events, list)
+    events.append(
+        {
+            "id": 0,
+            "name": "zero",
+            "category": "audit",
+            "kind": "instant",
+            "arguments": [],
+        }
+    )
+    schema = CompactSchema.from_mapping(mapping)
+    inline_zero = schema.v3_inline_opcodes[0][0]
+    payload = bytes([inline_zero, 0xF0, inline_zero])
+    path = tmp_path / "invalid-opcode.rbct"
+    path.write_bytes(
+        _v3_payload_image(
+            schema, payload, records=3, events=3, finalized=False
+        )
+    )
+
+    trace = read_compact_trace(path, schema, allow_unfinalized=True)
+
+    assert [record.event.id for record in trace.records] == [0]
+
+
+def test_v3_full_payload_needs_no_trailing_sentinel(tmp_path: Path) -> None:
+    mapping = _schema_mapping()
+    events = mapping["events"]
+    assert isinstance(events, list)
+    events.append(
+        {
+            "id": 0,
+            "name": "minimal",
+            "category": "density",
+            "kind": "instant",
+            "arguments": [],
+        }
+    )
+    schema = CompactSchema.from_mapping(mapping)
+    delta_zero = schema.v3_inline_opcodes[0][0]
+    path = tmp_path / "full-v3-payload.rbct"
+    path.write_bytes(
+        _v3_payload_image(
+            schema,
+            bytes([delta_zero]) * (4096 - 48),
+            records=4096 - 48,
+            events=4096 - 48,
+        )
+    )
+
+    trace = read_compact_trace(path, schema)
+
+    assert len(trace.records) == 4048
+    assert all(record.event.id == 0 for record in trace.records)
+
+
+def test_v3_live_recovery_crosses_slack_in_an_older_chunk(
+    tmp_path: Path,
+) -> None:
+    mapping = _schema_mapping()
+    events = mapping["events"]
+    assert isinstance(events, list)
+    events.append(
+        {
+            "id": 0,
+            "name": "minimal",
+            "category": "density",
+            "kind": "instant",
+            "arguments": [],
+        }
+    )
+    schema = CompactSchema.from_mapping(mapping)
+    delta_zero = schema.v3_inline_opcodes[0][0]
+    image = bytearray(
+        _v3_payload_image(
+            schema,
+            bytes([delta_zero]),
+            records=2,
+            events=2,
+            finalized=False,
+        )
+    )
+    second = bytearray(4096)
+    second[:4] = b"RBCK"
+    struct.pack_into(
+        "<QQIIHHIHHI",
+        second,
+        4,
+        1,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+    )
+    second[48] = delta_zero
+    image.extend(second)
+    struct.pack_into("<Q", image, 136, len(image))
+    path = tmp_path / "v3-live-two-chunks.rbct"
+    path.write_bytes(image)
+
+    trace = read_compact_trace(path, schema, allow_unfinalized=True)
+
+    assert [record.event.id for record in trace.records] == [0, 0]
+
+
+@pytest.mark.parametrize("advertised_used", [0, 1, 5, 0xFFFF])
+def test_v3_recovery_ignores_every_torn_metadata_cursor_shape(
+    tmp_path: Path, schema: CompactSchema, advertised_used: int
+) -> None:
+    event_opcode = schema.v3_event_opcodes[2]
+    payload = (
+        bytes([event_opcode, 0])
+        + _uleb(_zigzag(1))
+        + bytes([event_opcode, 1])
+        + _uleb(_zigzag(2))
+    )
+    image = bytearray(
+        _v3_payload_image(
+            schema,
+            payload,
+            records=0,
+            events=0,
+            finalized=False,
+            advertised_used=advertised_used,
+        )
+    )
+    struct.pack_into("<H", image, 160 + 30, 0xFFFF)
+    struct.pack_into("<I", image, 160 + 32, 0xFFFF_FFFF)
+    struct.pack_into("<H", image, 160 + 36, 0xFFFF)
+    path = tmp_path / f"torn-v3-metadata-{advertised_used}.rbct"
+    path.write_bytes(image)
+
+    trace = read_compact_trace(path, schema, allow_unfinalized=True)
+
+    assert [record.arguments for record in trace.records] == [(1,), (2,)]
+    assert trace.header.retained_records == 2
+    assert trace.header.retained_events == 2
+
+
+def test_v3_interrupted_finalization_retains_committed_prefix(
+    tmp_path: Path, schema: CompactSchema
+) -> None:
+    finalized = bytearray(_rbct_image(schema, version=3))
+    final_payload_crc = bytes(finalized[160 + 40 : 160 + 44])
+    final_chunk_crc = bytes(finalized[160 + 44 : 160 + 48])
+    final_header_crc = bytes(finalized[152:156])
+    live = bytearray(finalized)
+    struct.pack_into("<H", live, 38, 0)
+    live[160 + 40 : 160 + 48] = b"\0" * 8
+    live[152:156] = b"\0" * 4
+
+    snapshots = []
+    for written_crc_bytes in range(5):
+        image = bytearray(live)
+        image[160 + 40 : 160 + 40 + written_crc_bytes] = final_payload_crc[
+            :written_crc_bytes
+        ]
+        snapshots.append((f"payload-crc-{written_crc_bytes}", image))
+    for written_crc_bytes in range(5):
+        image = bytearray(live)
+        image[160 + 40 : 160 + 44] = final_payload_crc
+        image[160 + 44 : 160 + 44 + written_crc_bytes] = final_chunk_crc[
+            :written_crc_bytes
+        ]
+        snapshots.append((f"chunk-crc-{written_crc_bytes}", image))
+    advertised = bytearray(finalized)
+    struct.pack_into("<H", advertised, 38, 4)
+    advertised[152:156] = b"\0" * 4
+    for written_crc_bytes in range(5):
+        image = bytearray(advertised)
+        image[152 : 152 + written_crc_bytes] = final_header_crc[
+            :written_crc_bytes
+        ]
+        snapshots.append((f"header-crc-{written_crc_bytes}", image))
+    for written_crc_bytes in range(4):
+        image = bytearray(advertised)
+        image[152 : 152 + written_crc_bytes] = final_header_crc[
+            :written_crc_bytes
+        ]
+        struct.pack_into("<H", image, 38, 5)
+        snapshots.append((f"final-bit-{written_crc_bytes}", image))
+
+    for name, image in snapshots:
+        path = tmp_path / f"interrupted-finalize-{name}.rbct"
+        path.write_bytes(image)
+        trace = read_compact_trace(path, schema, allow_unfinalized=True)
+        assert len(trace.records) == 8
+        assert len(trace.clock_syncs) == 1
+
+    complete = tmp_path / "complete-finalization.rbct"
+    complete.write_bytes(finalized)
+    assert read_compact_trace(complete, schema).header.finalized
+
+
+def test_v3_finalized_corruption_is_detected_and_live_corruption_is_bounded(
+    tmp_path: Path, schema: CompactSchema
+) -> None:
+    finalized = bytearray(_rbct_image(schema, version=3))
+    finalized[160 + 48 + 3] ^= 0x80
+    finalized_path = tmp_path / "v3-finalized-corrupt.rbct"
+    finalized_path.write_bytes(finalized)
+    with pytest.raises(CompactTraceError, match="CRC mismatch"):
+        read_compact_trace(finalized_path, schema)
+
+    live = bytearray(_rbct_image(schema, version=3))
+    struct.pack_into("<H", live, 38, 0)
+    struct.pack_into("<I", live, 152, 0)
+    struct.pack_into("<I", live, 160 + 44, 0)
+    live[160 + 48] = 0xF0
+    live_path = tmp_path / "v3-live-corrupt.rbct"
+    live_path.write_bytes(live)
+    trace = read_compact_trace(live_path, schema, allow_unfinalized=True)
+    assert trace.records == ()
+    assert trace.clock_syncs == ()
 
 
 def test_v2_explicit_small_delta_is_noncanonical(schema: CompactSchema) -> None:
