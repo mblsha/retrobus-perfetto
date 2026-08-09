@@ -27,6 +27,12 @@ from .compact_schema import (
     CompactTrackSchema,
     render_c_schema_header,
 )
+from .compact_profile import (
+    aggregate_density_reports,
+    model_compact_trace,
+    profile_compact_corpus,
+    profile_compact_trace,
+)
 from .annotations import DebugAnnotationBuilder, TrackEventWrapper
 from .oracle_index import (
     IndexStats,
@@ -61,10 +67,14 @@ __all__ = [
     "TrackEventWrapper",
     "VerifyStats",
     "build_trace_index",
+    "aggregate_density_reports",
     "compact_trace_to_builder",
     "convert_compact_trace",
     "iter_trace_packets",
     "merge_perfetto_traces",
+    "model_compact_trace",
+    "profile_compact_corpus",
+    "profile_compact_trace",
     "resolve_interned_trace",
     "read_compact_trace",
     "render_c_schema_header",

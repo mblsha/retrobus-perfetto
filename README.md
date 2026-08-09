@@ -53,15 +53,18 @@ python tools/compact_schema_header.py producer-schema.json generated/schema.h \
     --prefix example
 python tools/compact_trace_to_perfetto.py capture.rbct capture.perfetto-trace \
   --schema producer-schema.json
+python tools/compact_trace_profile.py capture.rbct --schema producer-schema.json \
+  --output density.json
 python tools/merge_perfetto_sources.py capture.perfetto-trace kernel.perfetto-trace \
   --output combined.perfetto-trace
 ```
 
-The generated header provides schema-safe inline begin/emit functions; the
-normal record remains event ID, timestamp delta, optional duration, and
-schema-defined numeric arguments. Names and protobuf expansion happen only on
-the host. See [`compact/FORMAT.md`](compact/FORMAT.md) for the compatibility
-contract and [`compact/README.md`](compact/README.md) for the C/C++ API.
+The generated header provides schema-safe inline begin/emit functions and dense
+v3 semantic commit opcodes. Names and protobuf expansion happen only on the
+host. See [`compact/FORMAT.md`](compact/FORMAT.md) for the compatibility
+contract, [`compact/README.md`](compact/README.md) for the C/C++ API, and
+[`compact/V3_DENSITY_AUDIT.md`](compact/V3_DENSITY_AUDIT.md) for the density and
+recovery audit.
 
 ## Quick Start (Python)
 

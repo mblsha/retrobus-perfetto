@@ -19,6 +19,10 @@ from .compact_schema import CompactSchema as CompactSchema
 from .compact_schema import CompactSchemaError as CompactSchemaError
 from .compact_schema import CompactTrackSchema as CompactTrackSchema
 from .compact_schema import render_c_schema_header as render_c_schema_header
+from .compact_profile import aggregate_density_reports as aggregate_density_reports
+from .compact_profile import model_compact_trace as model_compact_trace
+from .compact_profile import profile_compact_corpus as profile_compact_corpus
+from .compact_profile import profile_compact_trace as profile_compact_trace
 from .oracle_index import IndexStats as IndexStats
 from .oracle_index import TracePacketRecord as TracePacketRecord
 from .oracle_index import VerifyStats as VerifyStats

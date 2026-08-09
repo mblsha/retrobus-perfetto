@@ -65,24 +65,35 @@ The buffer size must equal `RBCT_FILE_HEADER_BYTES` plus an integral number of
 `RBCT_CHUNK_BYTES`; initialization rejects trailing partial chunks. The writer,
 buffer, scope storage, and configuration must not overlap.
 
-New captures use framed format v2. Each record body is copied before its
-one-byte publication marker, so best-effort crash recovery does not
-mistake zero-filled slack for event ID zero. ARMv7+, AArch64, RISC-V, and x86
-receive a built-in store-publication barrier. Other targets, including ARMv5,
-must define `RBCT_PLATFORM_PUBLISH_BARRIER()` when a snapshot can race the
-writer, or quiesce and synchronize the writer before copying. Platforms whose
-snapshot is not coherent with ordinary stores must also supply the appropriate
-persistence or cache-flush policy.
+New captures use semantic-commit format v3. The generated schema header assigns
+ordinary opcodes to events in semantic-ID order and, where space remains,
+specialized delta-zero/one opcodes to no-argument instants. Each record body is
+copied while its opcode remains zero, then a publication barrier runs before
+the nonzero semantic opcode is stored last. Best-effort crash recovery therefore
+returns exactly a prefix of committed records without charging ordinary records
+a separate frame byte. The legacy generic begin/emit APIs remain valid through
+the extended-event opcode, but generated emitters provide the intended dense
+encoding.
 
-The marker also carries timestamp deltas zero and one. For event IDs `0..21`, a
-same-track event with one of those deltas and no duration or stored arguments is
-encoded entirely in that marker. A 4096-byte chunk therefore retains 4048
-minimal events—twice the density of the unframed v1 stream. Other delta-zero and
-delta-one events omit the timestamp field but retain a one-byte frame around
-their body. The resource regression test locks in the 4048-event capacity and
-caps the writer object at 136 bytes on 64-bit targets and 112 bytes on 32-bit
-targets; CI also caps the ARMv5TE `-Os` text and reported function-stack
-footprints.
+ARMv7+, AArch64, RISC-V, and x86 receive a built-in store-publication barrier.
+Other targets, including ARMv5, must define
+`RBCT_PLATFORM_PUBLISH_BARRIER()` when a snapshot can race the writer, or
+quiesce and synchronize the writer before copying. Platforms whose snapshot is
+not coherent with ordinary stores must also supply the appropriate persistence
+or cache-flush policy.
+
+A direct same-track slice with one-byte delta and duration is three bytes, so a
+4048-byte payload holds 1349 representative slices instead of v2's 1012. An
+eligible no-argument instant with delta zero or one is one byte and retains the
+4048-record capacity. The resource regressions lock in both capacities, cap the
+writer object at 136 bytes on 64-bit targets and 112 bytes on 32-bit targets,
+and keep each scope at 88 bytes. CI also caps ARMv5TE soft-float `-Os -ffixed-r9`
+writer text at 7000 bytes and reported stack at 192 bytes.
+
+Removing the v2 length envelope weakens arbitrary-corruption isolation for live,
+unchecksummed snapshots: a valid-looking corrupt body can disrupt the remainder
+of one chunk. It does not weaken interrupted-write publication. Finalized CRCs
+detect corruption, and chunk boundaries provide restart points every 4096 bytes.
 
 Chunk reuse invalidates the leading magic byte before changing any retained
 contents, then publishes that byte last after the replacement header is ready.

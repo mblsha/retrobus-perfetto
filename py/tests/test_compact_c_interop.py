@@ -12,7 +12,7 @@ from retrobus_perfetto import (
     read_compact_trace,
     render_c_schema_header,
 )
-from retrobus_perfetto.compact import FLAG_CHUNK_HEADER_CRC, FRAME_INLINE_ONE_LIMIT
+from retrobus_perfetto.compact import FLAG_CHUNK_HEADER_CRC
 
 
 def _compile_producer(
@@ -57,8 +57,10 @@ def test_c_writer_python_decoder_interoperability(tmp_path: Path) -> None:
     subprocess.run([executable, capture], check=True)
 
     image = capture.read_bytes()
-    first_marker = image[160 + 48]
-    assert image[160 + 48 + 1 + first_marker] == FRAME_INLINE_ONE_LIMIT
+    payload_offset = 160 + 48
+    assert image[:8] == b"RBCTRC3\0"
+    assert image[payload_offset] == 0xFD
+    assert image[payload_offset + 9] == schema.v3_inline_opcodes[21][1]
 
     trace = read_compact_trace(capture, schema)
     assert trace.header.flags & FLAG_CHUNK_HEADER_CRC
@@ -90,8 +92,8 @@ def test_wrapped_c_writer_remains_decodable_after_anchor_loss(
 
     assert trace.header.ring_wrapped
     assert trace.header.total_records == 672
-    assert trace.header.overwritten_records == 336
-    assert len(trace.records) == 336
+    assert trace.header.overwritten_records == 404
+    assert len(trace.records) == 268
     assert {record.generation for record in trace.records} == {7}
     assert {sync.generation for sync in trace.clock_syncs} == {8}
     assert trace.uncorrelated_generations == (7,)
@@ -114,7 +116,7 @@ def test_live_wrapped_c_writer_recovers_after_anchor_loss(tmp_path: Path) -> Non
 
     assert not trace.header.finalized
     assert trace.header.ring_wrapped
-    assert len(trace.records) == 336
+    assert len(trace.records) == 268
     assert trace.uncorrelated_generations == (7,)
 
     legacy_image = bytearray(capture.read_bytes())

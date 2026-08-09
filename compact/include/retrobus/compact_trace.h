@@ -8,14 +8,16 @@
 extern "C" {
 #endif
 
-#define RBCT_FORMAT_VERSION 2u
+#define RBCT_FORMAT_VERSION 3u
 #define RBCT_FILE_HEADER_BYTES 160u
 #define RBCT_CHUNK_HEADER_BYTES 48u
 #define RBCT_CHUNK_BYTES 4096u
-#define RBCT_RECORD_FRAME_BYTES 1u
+#define RBCT_RECORD_COMMIT_BYTES 1u
+#define RBCT_RECORD_FRAME_BYTES RBCT_RECORD_COMMIT_BYTES
 #define RBCT_MAX_RECORD_BYTES 70u
 #define RBCT_MAX_ARGUMENTS 4u
 #define RBCT_DIRECT_EVENT_ID_MAX 251u
+#define RBCT_DIRECT_EVENT_OPCODE_MAX 251u
 
 /*
  * When a snapshot can race the writer, compile compact_trace.c with a
@@ -75,7 +77,8 @@ typedef struct rbct_scope {
   uint32_t event_id;
   uint32_t track_id;
   uint8_t argument_count;
-  uint8_t reserved[7];
+  uint8_t event_opcode;
+  uint8_t reserved[6];
   rbct_argument_t arguments[RBCT_MAX_ARGUMENTS];
 } rbct_scope_t;
 
@@ -120,6 +123,18 @@ rbct_status_t rbct_writer_begin(rbct_writer_t* writer,
                                 const rbct_argument_t* arguments,
                                 size_t argument_count);
 
+/*
+ * Generic begin/emit use the valid but less-dense extended-event fallback.
+ * Schema-generated emitters use these opcode APIs for dense v3 records.
+ */
+rbct_status_t rbct_writer_begin_opcode(rbct_writer_t* writer,
+                                       uint64_t timestamp,
+                                       uint32_t track_id,
+                                       uint32_t event_id,
+                                       uint8_t event_opcode,
+                                       const rbct_argument_t* arguments,
+                                       size_t argument_count);
+
 rbct_status_t rbct_writer_end(rbct_writer_t* writer, uint64_t timestamp);
 
 /* Discard the innermost open scope without serializing it. */
@@ -131,6 +146,16 @@ rbct_status_t rbct_writer_emit(rbct_writer_t* writer,
                                uint32_t event_id,
                                const rbct_argument_t* arguments,
                                size_t argument_count);
+
+rbct_status_t rbct_writer_emit_opcode(rbct_writer_t* writer,
+                                      uint64_t timestamp,
+                                      uint32_t track_id,
+                                      uint32_t event_id,
+                                      uint8_t event_opcode,
+                                      uint8_t delta_zero_opcode,
+                                      uint8_t delta_one_opcode,
+                                      const rbct_argument_t* arguments,
+                                      size_t argument_count);
 
 rbct_status_t rbct_writer_clock_sync(rbct_writer_t* writer,
                                      uint32_t generation,

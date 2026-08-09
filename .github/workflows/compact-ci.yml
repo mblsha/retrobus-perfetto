@@ -6,24 +6,30 @@ on:
     paths:
       - 'compact/**'
       - 'py/retrobus_perfetto/compact.py'
+      - 'py/retrobus_perfetto/compact_profile.py'
       - 'py/retrobus_perfetto/compact_schema.py'
       - 'py/tests/test_compact.py'
       - 'py/tests/test_compact_c_interop.py'
+      - 'py/tests/test_compact_profile.py'
       - 'py/pyproject.toml'
       - 'py/uv.lock'
       - 'tools/compact_schema_header.py'
+      - 'tools/compact_trace_profile.py'
       - 'tools/compact_trace_to_perfetto.py'
       - '.github/workflows/compact-ci.yml'
   pull_request:
     paths:
       - 'compact/**'
       - 'py/retrobus_perfetto/compact.py'
+      - 'py/retrobus_perfetto/compact_profile.py'
       - 'py/retrobus_perfetto/compact_schema.py'
       - 'py/tests/test_compact.py'
       - 'py/tests/test_compact_c_interop.py'
+      - 'py/tests/test_compact_profile.py'
       - 'py/pyproject.toml'
       - 'py/uv.lock'
       - 'tools/compact_schema_header.py'
+      - 'tools/compact_trace_profile.py'
       - 'tools/compact_trace_to_perfetto.py'
       - '.github/workflows/compact-ci.yml'
 
@@ -78,7 +84,7 @@ jobs:
         run: |
           clang --target=armv5te-none-eabi -march=armv5te -mfloat-abi=soft \
             -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
-            -fstack-usage \
+            -ffixed-r9 -fstack-usage \
             -Wall -Wextra -Werror -Icompact/include \
             -c compact/src/compact_trace.c -o build/compact/compact_trace_armv5te.o
           undefined="$(readelf -Ws build/compact/compact_trace_armv5te.o | \
@@ -92,7 +98,7 @@ jobs:
           test "$max_stack" -le 192
           clang --target=armv5te-none-eabi -march=armv5te -mfloat-abi=soft \
             -std=c99 -Os -ffreestanding -fno-builtin -fno-stack-protector \
-            -Wall -Wextra -Werror -Icompact/include \
+            -ffixed-r9 -Wall -Wextra -Werror -Icompact/include \
             -c compact/tests/test_compact_trace_resources.c \
             -o build/compact/test_compact_trace_resources_armv5te.o
           clang --target=armv7a-none-eabi -march=armv7-a -mfloat-abi=soft \
@@ -194,3 +200,4 @@ jobs:
           uv run pytest
           tests/test_compact.py
           tests/test_compact_c_interop.py
+          tests/test_compact_profile.py

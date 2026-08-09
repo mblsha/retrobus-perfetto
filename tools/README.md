@@ -24,6 +24,39 @@ python tools/compact_trace_to_perfetto.py capture.rbct capture.perfetto-trace \
   --schema schema.json
 ```
 
+Replay the same ordered logical records through the v1, v2, and v3 encodings
+and attribute their wire cost:
+
+```sh
+python tools/compact_trace_profile.py capture.rbct --schema schema.json \
+  --output density.json --fail-on-v2-mismatch
+```
+
+For a scenario corpus, use a manifest whose paths are relative to the manifest:
+
+```json
+{
+  "schema": "redux-trace-v1.json",
+  "captures": [
+    {"path": "zire-cold.rbct", "device": "Zire 31", "scenario": "cold boot"},
+    {"path": "t3-input.rbct", "device": "Tungsten T3", "scenario": "input"}
+  ]
+}
+```
+
+```sh
+python tools/compact_trace_profile.py --manifest corpus.json \
+  --output density.json --fail-on-v2-mismatch
+```
+
+The JSON reports publication, event identity, delta, duration, argument,
+track/control, header, and slack bytes; records and expanded events per payload
+KiB; per-event frequency/cost; varint-width histograms; special-opcode hits;
+chunk sequences, wraps, and overwrite counts. For complete v2 captures, the
+tool also requires its replayed per-chunk used lengths to match the actual wire
+layout. Ring-wrapped inputs are explicitly marked retained-only because their
+overwritten logical records are no longer available to replay.
+
 Merge already correlated Perfetto sources while remapping track, packet
 sequence, and flow IDs that would otherwise collide:
 

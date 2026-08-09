@@ -68,6 +68,17 @@ class Writer {
     return status_;
   }
 
+  Status begin_opcode(std::uint64_t timestamp,
+                      std::uint32_t track,
+                      std::uint32_t event,
+                      std::uint8_t event_opcode,
+                      std::initializer_list<Argument> arguments = {}) noexcept {
+    status_ = rbct_writer_begin_opcode(&writer_, timestamp, track, event,
+                                       event_opcode, arguments.begin(),
+                                       arguments.size());
+    return status_;
+  }
+
   Status end(std::uint64_t timestamp) noexcept {
     status_ = rbct_writer_end(&writer_, timestamp);
     return status_;
@@ -84,6 +95,19 @@ class Writer {
               std::initializer_list<Argument> arguments = {}) noexcept {
     status_ = rbct_writer_emit(&writer_, timestamp, track, event,
                                arguments.begin(), arguments.size());
+    return status_;
+  }
+
+  Status emit_opcode(std::uint64_t timestamp,
+                     std::uint32_t track,
+                     std::uint32_t event,
+                     std::uint8_t event_opcode,
+                     std::uint8_t delta_zero_opcode,
+                     std::uint8_t delta_one_opcode,
+                     std::initializer_list<Argument> arguments = {}) noexcept {
+    status_ = rbct_writer_emit_opcode(
+        &writer_, timestamp, track, event, event_opcode, delta_zero_opcode,
+        delta_one_opcode, arguments.begin(), arguments.size());
     return status_;
   }
 

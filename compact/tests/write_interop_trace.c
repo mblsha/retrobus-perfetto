@@ -8,6 +8,8 @@ int main(int argc, char** argv) {
   rbct_scope_t scopes[4];
   rbct_writer_t writer;
   rbct_config_t config = {0};
+  const rbct_argument_t amount = rbct_argument_u64(42);
+  const rbct_argument_t fault = rbct_argument_i64(-7);
   FILE* output;
   unsigned index;
 
@@ -44,10 +46,11 @@ int main(int argc, char** argv) {
       RBCT_INVALID_ARGUMENT) {
     return 16;
   }
-  if (INTEROP_TRACE_BEGIN_WORK(&writer, 110, 0, 42) != RBCT_OK) {
+  /* The generic APIs remain a valid, less-dense compatibility fallback. */
+  if (rbct_writer_begin(&writer, 110, 0, 1, &amount, 1) != RBCT_OK) {
     return 5;
   }
-  if (INTEROP_TRACE_EMIT_FAULT(&writer, 120, 0, -7) != RBCT_OK) {
+  if (rbct_writer_emit(&writer, 120, 0, 2, &fault, 1) != RBCT_OK) {
     return 6;
   }
   if (rbct_writer_end(&writer, 150) != RBCT_OK) {

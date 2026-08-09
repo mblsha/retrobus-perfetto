@@ -55,7 +55,11 @@ trace_data = builder.serialize()
 ### Compact target captures
 
 ```python
-from retrobus_perfetto import CompactSchema, convert_compact_trace
+from retrobus_perfetto import (
+    CompactSchema,
+    convert_compact_trace,
+    profile_compact_trace,
+)
 
 schema = CompactSchema.load("producer-schema.json")
 summary = convert_compact_trace(
@@ -63,6 +67,7 @@ summary = convert_compact_trace(
     schema,
     "capture.perfetto-trace",
 )
+density = profile_compact_trace("capture.rbct", schema)
 ```
 
 `CompactTraceReader.iter_items()` validates and yields one bounded chunk at a
@@ -71,6 +76,8 @@ is not constrained and pre-indexes clock generations and correlation anchors
 for efficient timestamp conversion. Both entry points require the exact
 external producer schema identified by the capture header. Unfinalized reads
 are explicitly best-effort and report retained, successfully decoded records.
+`profile_compact_trace()` replays those logical records through v1/v2/v3 and
+reports byte attribution, density, varint widths, opcode hits, and chunk use.
 `CompactTrace.uncorrelated_generations` identifies relative-only generations,
 including a wrapped prefix whose original clock anchor was overwritten.
 

@@ -1,4 +1,4 @@
-# Retrobus compact trace format v2 (`.rbct`)
+# Retrobus compact trace format v3 (`.rbct`)
 
 Retrobus compact trace is a producer-neutral, bounded flight-recorder format
 for targets where emitting native Perfetto protobuf would perturb the workload.
@@ -34,22 +34,27 @@ sizes that are not exactly one header plus an integral number of chunks:
 
 The chunks form a ring. Physical chunk order is not chronological after wrap;
 readers order valid chunks by their 64-bit sequence number. Unused chunks are
-zero. Version 2 also requires the payload slack after each valid chunk's `used`
-cursor to be zero.
+zero. Versions 2 and 3 also require the payload slack after each valid chunk's
+`used` cursor to be zero.
 `rbct_writer_finalize()` computes CRCs after measurement, publishes the final
-header CRC, and commits the image by setting the finalized bit last. Version 2
-writers protect both payloads and chunk headers, and
-readers reject a finalized version 2 image without both protections. Readers
+header CRC, and commits the image by setting the finalized bit last. Versions 2
+and 3 protect both payloads and chunk headers, and readers reject a finalized
+image in either version without both protections. Readers
 remain compatible with finalized version 1 images that protect payloads only.
 
 An explicitly requested crash-image read is best-effort. Version 2 scans
-transactional record frames rather than trusting the two-byte payload cursor,
-skips incomplete chunk headers, ignores count fields that may lag frame commits,
-and retains only the completely published record prefix. Total overwrite/drop
-accounting is unavailable and is conservatively reported as the retained
-records only. The target writer invokes `RBCT_PLATFORM_PUBLISH_BARRIER()` before
-each commit marker, and after an invalidation marker when later writes must not
-pass it. Built-in hardware store barriers cover
+transactional record frames. Version 3 scans nonzero committed opcodes. Neither
+trusts the two-byte payload cursor or count fields, which may lag publication;
+both retain only the completely published record prefix. In a committed older
+chunk, zero ends that chunk's slack and scanning continues with the next chunk;
+in the newest chunk, zero ends the capture. An invalid, truncated, malformed,
+or noncanonical record stops the capture because the single writer cannot have
+committed a later record first.
+Total overwrite/drop accounting is unavailable and is conservatively reported
+as the retained records only. The target writer invokes
+`RBCT_PLATFORM_PUBLISH_BARRIER()` before each commit opcode, and after an
+invalidation marker when later writes must not pass it. Built-in hardware store
+barriers cover
 ARMv7+, AArch64, and RISC-V; x86 uses its store-ordering guarantee plus a
 compiler barrier under GCC, Clang, and MSVC. MSVC ARM builds use a hardware
 barrier. Other targets, including ARMv5, default to compiler ordering and must
@@ -65,8 +70,8 @@ rejects a file that changes between its header and payload passes.
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
-| 0 | 8 | `RBCTRC2\0` |
-| 8 | 2 | format version (`2`) |
+| 0 | 8 | `RBCTRC3\0` |
+| 8 | 2 | format version (`3`) |
 | 10 | 2 | file header bytes (`160`) |
 | 12 | 2 | chunk header bytes (`48`) |
 | 14 | 2 | reserved, zero |
@@ -125,11 +130,90 @@ the chunk commit marker. A crash reader ignores chunks whose magic was not
 completely published.
 When flag bit 2 is set, the chunk-header CRC covers all 48 header bytes with the
 field at offset 44 treated as zero. The payload CRC continues to cover exactly
-the `used payload bytes`; finalized version 2 readers also require the
+the `used payload bytes`; finalized version 2 and 3 readers also require the
 unprotected payload slack to remain zero, making hidden trailing data
 non-canonical without narrowing version 1 compatibility.
 
-## Payload record frames
+## Version 3 semantic commit opcodes
+
+Version 3 uses the first byte of each logical record both as its semantic
+opcode and as its transactional publication marker. Payloads are zero-filled.
+The writer leaves the opcode byte zero, writes the remaining body, executes the
+platform publication barrier, and stores the nonzero opcode last.
+
+The exact producer schema determines the opcode map without changing semantic
+event IDs:
+
+1. Sort events by semantic ID. The first 251 events receive ordinary opcodes
+   `0x01..0xfb` in that order.
+2. If ordinary events leave free opcodes below `0xfc`, assign pairs to eligible
+   no-stored-argument instants in semantic-ID order. The first opcode in a pair
+   means delta zero and the second means delta one.
+3. Events without an ordinary opcode use the extended-event control plus their
+   semantic ID. Generated emitters use the ordinary and specialized forms; the
+   public generic writer API deliberately uses the extended form as a
+   schema-independent compatibility fallback.
+
+The control namespace is fixed:
+
+| Opcode | Meaning |
+| ---: | --- |
+| `0x00` | uncommitted sentinel |
+| `0x01..0xfb` | schema-derived ordinary event or specialized instant |
+| `0xfc` | reserved loss marker |
+| `0xfd` | clock synchronization |
+| `0xfe` | tracked-event wrapper |
+| `0xff` | extended event |
+
+A same-track ordinary event is:
+
+```text
+ordinary schema opcode
+timestamp delta ULEB128
+duration ULEB128, only for schema kind "slice"
+schema-defined arguments
+```
+
+A specialized instant is its one-byte schema opcode with no body. An extended
+event replaces the ordinary opcode with `0xff`, followed by the semantic event
+ID as ULEB128 and then the ordinary body. A track change wraps the complete
+event in one transaction:
+
+```text
+0xfe
+track ID ULEB128
+inner ordinary/specialized opcode, or 0xff plus semantic event ID
+remaining event body
+```
+
+The outer `0xfe` is published last, so a track selection can never be stranded
+without its event. A wrapper selecting the current track, a nested control, an
+unknown schema opcode, or a specialized opcode with an incompatible schema
+shape is invalid. A clock synchronization is `0xfd` followed by its five
+fields. No event may exceed 70 total bytes including its committed opcode.
+
+The crash-publication guarantee follows by induction. Before the final opcode
+store, a reader reaches zero and returns the preceding fully committed prefix.
+After that store, the barrier makes the complete schema-shaped body visible.
+The writer never starts a later record first. Updating `used`, counts, and
+writer state only afterward therefore cannot expose a partial logical record.
+A completely full payload is valid without a trailing zero sentinel.
+
+This guarantee addresses interrupted writes, not arbitrary memory corruption.
+Unlike v2's per-record length, an unfinalized v3 corruption that happens to look
+like a valid opcode or varint can alter parsing through the rest of that chunk.
+The next 4096-byte chunk is the amortized restart point because each chunk resets
+timestamp and track state. Finalized payload and header CRCs detect corruption.
+Finer live resynchronization would require measured justification for extra
+checksums or restart metadata; v3 does not charge every record another byte.
+
+For a direct same-track slice with one-byte delta and duration, v3 uses three
+bytes, matching v1 and improving a 4048-byte payload from 1012 v2 records to
+1349 v3 records. A specialized no-argument instant with delta zero or one uses
+one byte, retaining 4048 records. Argument-bearing events with delta zero or one
+are no larger than their v1/v2 representation.
+
+## Version 2 record frames
 
 Each version 2 logical record has this transactional envelope:
 
@@ -170,10 +254,11 @@ A frame contains exactly one event or one clock synchronization. An event frame
 may begin with one non-redundant track selection; a clock-sync frame may not.
 This keeps every publication unit independently bounded and canonical.
 
-## Logical records
+## Logical record semantics
 
-IDs `0..251` are encoded directly in one byte. Event IDs at or above 252 use
-`0xff` followed by their ULEB128 value. The remaining lead bytes are controls:
+In v1 and v2 bodies, semantic IDs `0..251` are encoded directly in one byte.
+Event IDs at or above 252 use `0xff` followed by their ULEB128 value. Their
+remaining lead bytes are controls:
 
 | Lead | Record |
 | ---: | --- |
@@ -243,14 +328,14 @@ correlation, including cross-generation mapped-time monotonicity, is validated
 on the host so the freestanding recorder does not need multiword arithmetic
 state or code.
 
-In version 2, within one generation, the producer must ensure that the actual time between
-consecutive serialized observations, every completed-slice duration, and every
-clock-sync bracket is strictly less than half the counter range. Writers and
-readers reject modulo deltas at or above `2^(counter_width - 1)`. This rejects
-ordinary backwards samples and makes a single wrap unambiguous under the
-producer contract; the wire representation cannot detect an exact multiple of
-the complete counter period, so producers must synchronize or change generation
-before that limit.
+In versions 2 and 3, within one generation, the producer must ensure that the
+actual time between consecutive serialized observations, every completed-slice
+duration, and every clock-sync bracket is strictly less than half the counter
+range. Writers and readers reject modulo deltas at or above
+`2^(counter_width - 1)`. This rejects ordinary backwards samples and makes a
+single wrap unambiguous under the producer contract; the wire representation
+cannot detect an exact multiple of the complete counter period, so producers
+must synchronize or change generation before that limit.
 
 ## Producer schema
 
@@ -300,7 +385,7 @@ are restricted to `0..INT64_MAX` because Perfetto's exact integer counter field
 is signed 64-bit. Counter events are valid only on counter tracks, and every
 other event kind is valid only on thread tracks. Generated emitters enforce the
 track domain, signed counter range, and finite floating-point bit pattern before
-calling the generic writer.
+calling the opcode-aware writer API.
 
 Flow and asynchronous events may define a `series` string used to pair lifecycle
 records; it defaults to the event display name. Each asynchronous series must
@@ -336,6 +421,14 @@ for every other event. These functions select the correct record shape,
 argument count, and integer encoding. `fixed64` and `float64` parameters are
 supplied as their exact 64-bit wire bits.
 
+The generator also derives v3 ordinary and specialized opcode constants from
+the schema. That mapping changes only the wire representation selected by
+`RBCTRC3`; semantic IDs, argument order, canonical schema JSON, schema hash, and
+producer schema version are unchanged. A future format that makes opcode
+priority or aliases explicit schema data must change the canonical schema and
+use a corresponding producer-schema version rather than silently reinterpreting
+an existing hash.
+
 ## Resource and safety contract
 
 - Initialization zeros and therefore prefaults the complete usable buffer.
@@ -352,12 +445,13 @@ supplied as their exact 64-bit wire bits.
   tracepoints. Convert and correlate those records rather than putting this
   userspace writer in the kernel.
 
-## Version 1 compatibility
+## Version compatibility
 
 Version 1 uses `RBCTRC1\0` and an unframed payload stream. The current reader
 accepts canonical output from the original writer, including arbitrary clock
 generation identifiers and modulo counter gaps that predate the v2 half-range
-contract. New writers emit only version 2. Version 1 crash recovery remains
-inherently heuristic because it has neither record frames nor a transactional
-cursor; applications needing trustworthy recovery must migrate their producer
-to version 2.
+contract. Version 2 uses `RBCTRC2\0` and the transactional length/implicit-delta
+frames documented above. New writers emit only version 3. Version 1 crash
+recovery remains inherently heuristic because it has neither record frames nor
+a semantic commit opcode; applications needing trustworthy recovery must
+migrate their producer to version 3. The host reader retains v1 and v2 support.
