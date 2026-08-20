@@ -2,30 +2,10 @@
 
 from typing import Any, Dict, Optional
 
-# Import will be available after protobuf compilation
-try:
-    from .proto import perfetto_pb2 as perfetto
-except ImportError:
-    # This will be resolved after setup.py runs
-    perfetto = None  # type: ignore[assignment]
+from .proto import perfetto_pb2 as perfetto
 
 from .annotations import TrackEventWrapper
 from .interning import InterningState
-
-
-# Type stubs for type checking when perfetto is not available
-if not perfetto:
-    class _MockPerfetto:
-        """Mock perfetto module for type checking."""
-        class Trace:
-            """Mock Trace class."""
-
-        class TrackEvent:
-            """Mock TrackEvent class."""
-            TYPE_SLICE_BEGIN = 1
-            TYPE_SLICE_END = 2
-            TYPE_INSTANT = 3
-            TYPE_COUNTER = 4
 
 
 class PerfettoTraceBuilder:
@@ -44,12 +24,6 @@ class PerfettoTraceBuilder:
             process_name: Name of the process being traced
             encoding: "interned" (default) or "inline"
         """
-        if perfetto is None:
-            raise ImportError(
-                "Perfetto protobuf module not found. "
-                "Please run 'python setup.py build' to generate protobuf files."
-            )
-
         if encoding not in {"inline", "interned"}:
             raise ValueError(f"Unknown encoding: {encoding!r}")
 
