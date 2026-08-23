@@ -3,6 +3,9 @@ from typing import Iterator, Sequence
 
 from . import proto as proto
 from .annotations import DebugAnnotationBuilder as DebugAnnotationBuilder
+from .annotations import DebugAnnotationCycleError as DebugAnnotationCycleError
+from .annotations import DebugAnnotationDepthError as DebugAnnotationDepthError
+from .annotations import DebugAnnotationError as DebugAnnotationError
 from .annotations import TrackEventWrapper as TrackEventWrapper
 from .builder import PerfettoTraceBuilder as PerfettoTraceBuilder
 from .compact import CompactClockSync as CompactClockSync
@@ -31,6 +34,20 @@ from .oracle_index import IndexStats as IndexStats
 from .oracle_index import TracePacketRecord as TracePacketRecord
 from .oracle_index import VerifyStats as VerifyStats
 from .merge import merge_perfetto_traces as merge_perfetto_traces
+from .models import ClockReading as ClockReading
+from .models import InlineFrame as InlineFrame
+from .models import LegacyEvent as LegacyEvent
+from .models import Pointer as Pointer
+from .models import SourceLocation as SourceLocation
+from .models import StackFrame as StackFrame
+from .models import StackMapping as StackMapping
+from .models import UInt as UInt
+from .reader import ResolvedCallstack as ResolvedCallstack
+from .reader import ResolvedFrame as ResolvedFrame
+from .reader import ResolvedMapping as ResolvedMapping
+from .reader import ResolvedTrackEvent as ResolvedTrackEvent
+from .reader import iter_resolved_track_events as iter_resolved_track_events
+from .reader import resolve_interned_trace as resolve_interned_trace
 
 __version__: str
 

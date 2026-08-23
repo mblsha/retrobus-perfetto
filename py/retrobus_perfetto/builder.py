@@ -1,11 +1,12 @@
 """Main builder class for creating Perfetto traces."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence, Union
 
 from .proto import perfetto_pb2 as perfetto
 
 from .annotations import TrackEventWrapper
 from .interning import InterningState
+from .models import ClockReading, LegacyEvent
 
 
 class PerfettoTraceBuilder:
@@ -16,16 +17,27 @@ class PerfettoTraceBuilder:
     making it easy to create traces for retrocomputer emulators and similar applications.
     """
 
-    def __init__(self, process_name: str, encoding: str = "interned"):
+    def __init__(
+        self,
+        process_name: str,
+        encoding: str = "interned",
+        *,
+        annotation_max_depth: int = 64,
+        timestamp_clock_id: Optional[int] = None,
+    ):
         """
         Initialize a new trace builder.
 
         Args:
             process_name: Name of the process being traced
             encoding: "interned" (default) or "inline"
+            annotation_max_depth: Maximum structured annotation container depth
+            timestamp_clock_id: Optional per-sequence default timestamp clock
         """
         if encoding not in {"inline", "interned"}:
             raise ValueError(f"Unknown encoding: {encoding!r}")
+        if annotation_max_depth < 1:
+            raise ValueError("annotation_max_depth must be at least 1")
 
         self.trace = perfetto.Trace()
         self.last_track_uuid = 0
@@ -34,12 +46,16 @@ class PerfettoTraceBuilder:
         self.last_tid = 1
         self.track_metadata: Dict[int, Dict[str, Any]] = {}
         self._encoding = encoding
+        self._annotation_max_depth = annotation_max_depth
+        self._default_timestamp_clock_id: Optional[int] = None
         self._interning_state: Optional[InterningState] = (
             InterningState() if encoding == "interned" else None
         )
 
         # Create the main process
         self.process_uuid = self.add_process(process_name)
+        if timestamp_clock_id is not None:
+            self.set_default_timestamp_clock(timestamp_clock_id)
 
     def _next_uuid(self) -> int:
         """Generate the next track UUID."""
@@ -108,17 +124,98 @@ class PerfettoTraceBuilder:
 
         return track_uuid
 
+    def add_track(
+        self,
+        name: str,
+        parent_uuid: Optional[int] = None,
+        *,
+        sibling_merge_behavior: Optional[int] = None,
+        sibling_merge_key: Optional[Union[str, int]] = None,
+    ) -> int:
+        """Add a generic nestable TrackEvent track.
+
+        Set ``sibling_merge_behavior`` to the exact
+        ``TrackDescriptor.SIBLING_MERGE_BEHAVIOR_*`` enum. Supplying a merge key
+        defaults the behavior to ``BY_SIBLING_MERGE_KEY``. Multiple backing
+        lanes with the same parent and key can overlap while Perfetto presents
+        them as one logical nested track.
+        """
+        if parent_uuid is None:
+            parent_uuid = self.process_uuid
+        if sibling_merge_behavior is not None and (
+            isinstance(sibling_merge_behavior, bool)
+            or sibling_merge_behavior not in range(4)
+        ):
+            raise ValueError("sibling_merge_behavior must be an official enum value")
+        if isinstance(sibling_merge_key, bool):
+            raise TypeError("sibling_merge_key must be a string or uint64")
+        if sibling_merge_key is not None and not isinstance(
+            sibling_merge_key, (str, int)
+        ):
+            raise TypeError("sibling_merge_key must be a string or uint64")
+        if isinstance(sibling_merge_key, int) and not (
+            0 <= sibling_merge_key <= 0xFFFF_FFFF_FFFF_FFFF
+        ):
+            raise ValueError("integer sibling_merge_key must fit in uint64")
+        if sibling_merge_key is not None and sibling_merge_behavior is None:
+            sibling_merge_behavior = (
+                perfetto.TrackDescriptor.SIBLING_MERGE_BEHAVIOR_BY_SIBLING_MERGE_KEY
+            )
+        if sibling_merge_key is not None and sibling_merge_behavior != (
+            perfetto.TrackDescriptor.SIBLING_MERGE_BEHAVIOR_BY_SIBLING_MERGE_KEY
+        ):
+            raise ValueError("sibling merge keys require BY_SIBLING_MERGE_KEY")
+
+        track_uuid = self._next_uuid()
+        descriptor = self.trace.packet.add().track_descriptor
+        descriptor.uuid = track_uuid
+        descriptor.parent_uuid = parent_uuid
+        descriptor.name = name
+        if sibling_merge_behavior is not None:
+            descriptor.sibling_merge_behavior = sibling_merge_behavior
+        if isinstance(sibling_merge_key, str):
+            descriptor.sibling_merge_key = sibling_merge_key
+        elif isinstance(sibling_merge_key, int):
+            descriptor.sibling_merge_key_int = sibling_merge_key
+
+        self.track_metadata[track_uuid] = {
+            "type": "track",
+            "name": name,
+            "parent": parent_uuid,
+            "sibling_merge_behavior": sibling_merge_behavior,
+            "sibling_merge_key": sibling_merge_key,
+        }
+        return track_uuid
+
+    def add_merged_track_lane(
+        self,
+        name: str,
+        sibling_merge_key: Union[str, int],
+        parent_uuid: Optional[int] = None,
+    ) -> int:
+        """Add one backing lane merged with eligible lanes sharing its key."""
+        return self.add_track(
+            name,
+            parent_uuid,
+            sibling_merge_key=sibling_merge_key,
+        )
+
     def _add_track_event(
         self,
         track_uuid: int,
         timestamp: int,
-        event_type: int,
+        event_type: Optional[int],
         name: Optional[str] = None,
+        *,
+        timestamp_clock_id: Optional[int] = None,
     ):
         """Create a packet with a populated track event."""
         packet = self.trace.packet.add()
         packet.timestamp = timestamp
-        packet.track_event.type = event_type
+        if timestamp_clock_id is not None:
+            packet.timestamp_clock_id = timestamp_clock_id
+        if event_type is not None:
+            packet.track_event.type = event_type
         packet.track_event.track_uuid = track_uuid
         if name is not None:
             if self._interning_state is not None:
@@ -130,7 +227,23 @@ class PerfettoTraceBuilder:
         packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
         return packet
 
-    def begin_slice(self, track_uuid: int, name: str, timestamp: int) -> TrackEventWrapper:
+    def _wrap_track_event(self, packet) -> TrackEventWrapper:
+        return TrackEventWrapper(
+            packet.track_event,
+            packet=packet,
+            interning_state=self._interning_state,
+            max_depth=self._annotation_max_depth,
+        )
+
+    def begin_slice(
+        self,
+        track_uuid: int,
+        name: str,
+        timestamp: int,
+        *,
+        categories: Sequence[str] = (),
+        timestamp_clock_id: Optional[int] = None,
+    ) -> TrackEventWrapper:
         """
         Begin a duration slice event.
 
@@ -147,13 +260,19 @@ class PerfettoTraceBuilder:
             timestamp,
             perfetto.TrackEvent.TYPE_SLICE_BEGIN,
             name,
+            timestamp_clock_id=timestamp_clock_id,
         )
+        wrapper = self._wrap_track_event(event)
+        wrapper.add_categories(*categories)
+        return wrapper
 
-        return TrackEventWrapper(
-            event.track_event, packet=event, interning_state=self._interning_state
-        )
-
-    def end_slice(self, track_uuid: int, timestamp: int) -> None:
+    def end_slice(
+        self,
+        track_uuid: int,
+        timestamp: int,
+        *,
+        timestamp_clock_id: Optional[int] = None,
+    ) -> None:
         """
         End a duration slice event.
 
@@ -161,9 +280,22 @@ class PerfettoTraceBuilder:
             track_uuid: Track containing the slice
             timestamp: Timestamp in nanoseconds
         """
-        self._add_track_event(track_uuid, timestamp, perfetto.TrackEvent.TYPE_SLICE_END)
+        self._add_track_event(
+            track_uuid,
+            timestamp,
+            perfetto.TrackEvent.TYPE_SLICE_END,
+            timestamp_clock_id=timestamp_clock_id,
+        )
 
-    def add_instant_event(self, track_uuid: int, name: str, timestamp: int) -> TrackEventWrapper:
+    def add_instant_event(
+        self,
+        track_uuid: int,
+        name: str,
+        timestamp: int,
+        *,
+        categories: Sequence[str] = (),
+        timestamp_clock_id: Optional[int] = None,
+    ) -> TrackEventWrapper:
         """
         Add an instant (point-in-time) event.
 
@@ -180,11 +312,11 @@ class PerfettoTraceBuilder:
             timestamp,
             perfetto.TrackEvent.TYPE_INSTANT,
             name,
+            timestamp_clock_id=timestamp_clock_id,
         )
-
-        return TrackEventWrapper(
-            event.track_event, packet=event, interning_state=self._interning_state
-        )
+        wrapper = self._wrap_track_event(event)
+        wrapper.add_categories(*categories)
+        return wrapper
 
     def add_counter_track(self, name: str, unit: str = "",
                          parent_uuid: Optional[int] = None) -> int:
@@ -219,7 +351,12 @@ class PerfettoTraceBuilder:
         return track_uuid
 
     def update_counter(
-        self, track_uuid: int, value: float, timestamp: int
+        self,
+        track_uuid: int,
+        value: float,
+        timestamp: int,
+        *,
+        timestamp_clock_id: Optional[int] = None,
     ) -> TrackEventWrapper:
         """
         Update a counter value.
@@ -236,18 +373,26 @@ class PerfettoTraceBuilder:
             track_uuid,
             timestamp,
             perfetto.TrackEvent.TYPE_COUNTER,
+            timestamp_clock_id=timestamp_clock_id,
         )
 
         if isinstance(value, int):
             event.track_event.counter_value = value
         else:
             event.track_event.double_counter_value = value
-        return TrackEventWrapper(
-            event.track_event, packet=event, interning_state=self._interning_state
-        )
+        return self._wrap_track_event(event)
 
-    def add_flow(self, track_uuid: int, name: str, timestamp: int,
-                 flow_id: int, terminating: bool = False) -> TrackEventWrapper:
+    def add_flow(
+        self,
+        track_uuid: int,
+        name: str,
+        timestamp: int,
+        flow_id: int,
+        terminating: bool = False,
+        *,
+        categories: Sequence[str] = (),
+        timestamp_clock_id: Optional[int] = None,
+    ) -> TrackEventWrapper:
         """
         Add a flow event to connect events across tracks.
 
@@ -261,7 +406,13 @@ class PerfettoTraceBuilder:
         Returns:
             TrackEventWrapper for adding annotations
         """
-        event = self.add_instant_event(track_uuid, name, timestamp)
+        event = self.add_instant_event(
+            track_uuid,
+            name,
+            timestamp,
+            categories=categories,
+            timestamp_clock_id=timestamp_clock_id,
+        )
 
         if terminating:
             event.event.terminating_flow_ids.append(flow_id)
@@ -269,6 +420,89 @@ class PerfettoTraceBuilder:
             event.event.flow_ids.append(flow_id)
 
         return event
+
+    def add_legacy_event(
+        self,
+        track_uuid: int,
+        name: str,
+        timestamp: int,
+        legacy: LegacyEvent,
+        *,
+        categories: Sequence[str] = (),
+        timestamp_clock_id: Optional[int] = None,
+    ) -> TrackEventWrapper:
+        """Add an uncommon Chrome legacy phase without losing legacy fields."""
+        packet = self._add_track_event(
+            track_uuid,
+            timestamp,
+            None,
+            name,
+            timestamp_clock_id=timestamp_clock_id,
+        )
+        target = packet.track_event.legacy_event
+        target.phase = legacy.phase_value()
+        for name in (
+            "duration_us",
+            "thread_duration_us",
+            "thread_instruction_delta",
+            "id_scope",
+            "use_async_tts",
+            "bind_id",
+            "bind_to_enclosing",
+            "flow_direction",
+            "instant_event_scope",
+            "pid_override",
+            "tid_override",
+        ):
+            value = getattr(legacy, name)
+            if value is not None:
+                setattr(target, name, value)
+        if legacy.id is not None:
+            setattr(target, f"{legacy.id_type}_id", legacy.id)
+        wrapper = self._wrap_track_event(packet)
+        wrapper.add_categories(*categories)
+        return wrapper
+
+    def set_default_timestamp_clock(self, clock_id: int) -> None:
+        """Set the per-sequence default clock for future packet timestamps."""
+        if not 0 <= clock_id <= 0xFFFF_FFFF:
+            raise ValueError("clock_id must fit in uint32")
+        packet = self.trace.packet.add()
+        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+        packet.trace_packet_defaults.timestamp_clock_id = clock_id
+        self._default_timestamp_clock_id = clock_id
+
+    def add_clock_snapshot(
+        self,
+        readings: Sequence[ClockReading],
+        *,
+        primary_trace_clock: Optional[int] = None,
+    ) -> None:
+        """Relate custom/relative producer clocks to builtin clock domains."""
+        if not readings:
+            raise ValueError("a clock snapshot requires at least one reading")
+        if primary_trace_clock is not None and not 0 <= primary_trace_clock <= 63:
+            raise ValueError("primary_trace_clock must be a builtin clock ID")
+        packet = self.trace.packet.add()
+        packet.trusted_packet_sequence_id = self.trusted_packet_sequence_id
+        snapshot = packet.clock_snapshot
+        if primary_trace_clock is not None:
+            snapshot.primary_trace_clock = primary_trace_clock
+        for reading in readings:
+            if (
+                primary_trace_clock == reading.clock_id
+                and reading.unit_multiplier_ns is not None
+            ):
+                raise ValueError(
+                    "unit_multiplier_ns is not supported on the primary trace clock"
+                )
+            clock = snapshot.clocks.add()
+            clock.clock_id = reading.clock_id
+            clock.timestamp = reading.timestamp
+            if reading.is_incremental is not None:
+                clock.is_incremental = reading.is_incremental
+            if reading.unit_multiplier_ns is not None:
+                clock.unit_multiplier_ns = reading.unit_multiplier_ns
 
     def _add_frame_timeline_event(self, timestamp: int):
         """Create a FrameTimelineEvent packet."""

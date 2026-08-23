@@ -1285,3 +1285,163 @@ TEST_CASE("Interned encoding covers nested annotations",
   REQUIRE(child.dict_entries(1).has_name_iid());
   REQUIRE(child.dict_entries(1).int_value() == 2);
 }
+
+TEST_CASE("Categories and recursive arrays preserve their Perfetto types",
+          "[builder][interning][annotations]") {
+  PerfettoTraceBuilder builder("Profiler", 1234);
+  const auto lane = builder.add_thread("CUDA");
+  auto event = builder.add_instant_event(lane, "launch", 100);
+  event.add_category("cuda").add_category("kernel");
+  event.add_annotation("blocks", uint64_t{128});
+  event.add_pointer("stream_ptr", 0xfeed);
+
+  auto launch = event.annotation("launch");
+  auto grid = launch.array("grid");
+  grid.unsigned_integer(128).unsigned_integer(2).unsigned_integer(1);
+  auto nested = launch.array("nested");
+  nested.string("vector_add");
+  nested.dictionary().boolean("cooperative", true).floating("occupancy", 0.75);
+
+  perfetto::protos::Trace trace;
+  const auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  const auto& packet = trace.packet(trace.packet_size() - 1);
+  REQUIRE(packet.interned_data().event_categories_size() == 2);
+  REQUIRE(packet.track_event().category_iids_size() == 2);
+  REQUIRE(packet.track_event().debug_annotations(0).has_uint_value());
+  REQUIRE(packet.track_event().debug_annotations(1).has_pointer_value());
+
+  auto resolved = retrobus::resolve_interned_trace(trace);
+  const auto& resolved_event =
+      resolved.packet(resolved.packet_size() - 1).track_event();
+  REQUIRE(resolved_event.categories_size() == 2);
+  REQUIRE(resolved_event.categories(0) == "cuda");
+  REQUIRE(resolved_event.categories(1) == "kernel");
+  const auto& root = resolved_event.debug_annotations(2);
+  REQUIRE(root.dict_entries_size() == 2);
+  REQUIRE(root.dict_entries(0).array_values_size() == 3);
+  REQUIRE(root.dict_entries(0).array_values(0).uint_value() == 128);
+  REQUIRE(root.dict_entries(1).array_values(1).dict_entries(1).double_value() ==
+          0.75);
+}
+
+TEST_CASE("Sibling lanes and native callstacks use official fields",
+          "[builder][tracks][callstack]") {
+  PerfettoTraceBuilder builder("Profiler", 1234);
+  const auto first = builder.add_merged_track_lane("Kernel lane 0", "kernels");
+  const auto second = builder.add_merged_track_lane("Kernel lane 1", "kernels");
+  REQUIRE(first != second);
+
+  StackMapping mapping;
+  mapping.path = {"usr", "lib", "libcuda.so"};
+  mapping.build_id = std::string(
+      "\x01\x02"
+      "build",
+      7);
+  mapping.start = 0x1000;
+  mapping.end = 0x9000;
+
+  StackFrame outer;
+  outer.function_name = "main";
+  outer.source_path = "/src/main.cc";
+  outer.line_number = 7;
+  outer.kind = perfetto::protos::Frame::KIND_NATIVE;
+  StackFrame inner;
+  inner.function_name = "launch_kernel";
+  inner.mapping = mapping;
+  inner.rel_pc = 0x123;
+  inner.source_path = "/src/cuda.cc";
+  inner.line_number = 88;
+  inner.kind_string = "cuda";
+
+  builder.add_instant_event(first, "sample", 100)
+      .set_source_location({"/src/cuda.cc", "launch_kernel", 88})
+      .set_callstack({outer, inner});
+  builder.add_instant_event(second, "inline", 110)
+      .set_inline_callstack(
+          {{"outer", std::nullopt, std::nullopt},
+           {"inner", std::string("/src/cuda.cc"), uint32_t{88}}});
+
+  perfetto::protos::Trace trace;
+  const auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  const auto& first_descriptor = trace.packet(1).track_descriptor();
+  const auto& second_descriptor = trace.packet(2).track_descriptor();
+  REQUIRE(first_descriptor.sibling_merge_behavior() ==
+          perfetto::protos::TrackDescriptor::
+              SIBLING_MERGE_BEHAVIOR_BY_SIBLING_MERGE_KEY);
+  REQUIRE(first_descriptor.sibling_merge_key() == "kernels");
+  REQUIRE(second_descriptor.sibling_merge_key() == "kernels");
+
+  const auto& interned_event = trace.packet(3);
+  REQUIRE(interned_event.track_event().has_source_location_iid());
+  REQUIRE(interned_event.track_event().has_callstack_iid());
+  REQUIRE(interned_event.interned_data().source_locations_size() == 1);
+  REQUIRE(interned_event.interned_data().mappings_size() == 1);
+  REQUIRE(interned_event.interned_data().frames_size() == 2);
+  REQUIRE(interned_event.interned_data().callstacks_size() == 1);
+  REQUIRE(trace.packet(4).track_event().has_callstack());
+  REQUIRE(trace.packet(4).track_event().callstack().frames_size() == 2);
+}
+
+TEST_CASE("Legacy events and clock snapshots preserve exact payloads",
+          "[builder][legacy][clock]") {
+  PerfettoTraceBuilder builder("Clocked", 1234);
+  builder.set_default_timestamp_clock(65);
+  builder.add_clock_snapshot(
+      {{65, 1000, true, 10},
+       {static_cast<uint32_t>(perfetto::protos::BUILTIN_CLOCK_MONOTONIC), 20000,
+        std::nullopt, std::nullopt},
+       {static_cast<uint32_t>(perfetto::protos::BUILTIN_CLOCK_REALTIME), 30000,
+        std::nullopt, std::nullopt}},
+      perfetto::protos::BUILTIN_CLOCK_MONOTONIC);
+  const auto lane = builder.add_thread("Legacy");
+  LegacyEvent legacy;
+  legacy.phase = 'X';
+  legacy.duration_us = 20;
+  legacy.thread_duration_us = 10;
+  legacy.thread_instruction_delta = 7;
+  legacy.id = 0x123;
+  legacy.id_type = LegacyIdType::kGlobal;
+  legacy.id_scope = "scope";
+  legacy.use_async_tts = true;
+  legacy.bind_id = 0x456;
+  legacy.bind_to_enclosing = true;
+  legacy.flow_direction = perfetto::protos::TrackEvent::LegacyEvent::FLOW_INOUT;
+  legacy.instant_event_scope =
+      perfetto::protos::TrackEvent::LegacyEvent::SCOPE_PROCESS;
+  legacy.pid_override = 10;
+  legacy.tid_override = 11;
+  builder.add_legacy_event(
+      lane, "legacy", 5, legacy,
+      static_cast<uint32_t>(perfetto::protos::BUILTIN_CLOCK_REALTIME));
+
+  perfetto::protos::Trace trace;
+  const auto data = builder.serialize();
+  REQUIRE(trace.ParseFromArray(data.data(), static_cast<int>(data.size())));
+  REQUIRE(trace.packet(1).trace_packet_defaults().timestamp_clock_id() == 65);
+  REQUIRE(trace.packet(2).clock_snapshot().clocks_size() == 3);
+  REQUIRE(trace.packet(2).clock_snapshot().primary_trace_clock() ==
+          perfetto::protos::BUILTIN_CLOCK_MONOTONIC);
+  const auto& packet = trace.packet(trace.packet_size() - 1);
+  REQUIRE(packet.timestamp_clock_id() ==
+          perfetto::protos::BUILTIN_CLOCK_REALTIME);
+  const auto& payload = packet.track_event().legacy_event();
+  REQUIRE(payload.phase() == 'X');
+  REQUIRE(payload.duration_us() == 20);
+  REQUIRE(payload.thread_duration_us() == 10);
+  REQUIRE(payload.thread_instruction_delta() == 7);
+  REQUIRE(payload.id_case() ==
+          perfetto::protos::TrackEvent::LegacyEvent::kGlobalId);
+  REQUIRE(payload.global_id() == 0x123);
+  REQUIRE(payload.id_scope() == "scope");
+  REQUIRE(payload.use_async_tts());
+  REQUIRE(payload.bind_id() == 0x456);
+  REQUIRE(payload.bind_to_enclosing());
+  REQUIRE(payload.flow_direction() ==
+          perfetto::protos::TrackEvent::LegacyEvent::FLOW_INOUT);
+  REQUIRE(payload.instant_event_scope() ==
+          perfetto::protos::TrackEvent::LegacyEvent::SCOPE_PROCESS);
+  REQUIRE(payload.pid_override() == 10);
+  REQUIRE(payload.tid_override() == 11);
+}
