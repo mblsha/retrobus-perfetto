@@ -6,7 +6,11 @@ mod annotations;
 mod builder;
 mod reentrant;
 
-pub use annotations::AnnotationValue;
-pub use builder::{PerfettoTraceBuilder, TrackEventBuilder, TrackId};
-pub use perfetto_writer::CounterUnit;
+pub use annotations::{AnnotationError, AnnotationValue};
+pub use builder::{PerfettoTraceBuilder, TrackEventBuilder, TrackId, TrackKind, TrackOptions};
+pub use perfetto_writer::{
+    BuiltinClock, ClockReading, CounterUnit, FlowDirection, FrameKind, InlineFrame,
+    InstantEventScope, LegacyEvent, LegacyId, SiblingMergeBehavior, SiblingMergeKey,
+    SourceLocation, StackFrame, StackMapping,
+};
 pub use reentrant::{ReentrantGuard, ReentrantHandle};

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use protobuf::{Message, MessageField};
 use smol_str::SmolStr;
 use std::{
@@ -9,19 +9,180 @@ use std::{
 };
 
 use perfetto_protos::{
+    clock_snapshot::{ClockSnapshot, clock_snapshot::Clock},
     counter_descriptor::{CounterDescriptor, counter_descriptor::Unit},
     debug_annotation::{DebugAnnotation, DebugAnnotationName},
     interned_data::InternedData,
-    profile_common::InternedString,
-    source_location::SourceLocation,
+    profile_common::{Callstack as ProtoCallstack, Frame as ProtoFrame, InternedString, Mapping},
+    source_location::SourceLocation as ProtoSourceLocation,
     trace::Trace,
     trace_packet::{TracePacket, trace_packet::SequenceFlags},
+    trace_packet_defaults::TracePacketDefaults,
     track_descriptor::TrackDescriptor,
-    track_event::{EventCategory, EventName, TrackEvent, track_event::Type},
+    track_event::{
+        EventCategory, EventName, TrackEvent,
+        track_event::{LegacyEvent as ProtoLegacyEvent, Type, legacy_event},
+    },
 };
 
 // Re-export Unit enum for counter tracks
+pub use perfetto_protos::builtin_clock::BuiltinClock;
 pub use perfetto_protos::counter_descriptor::counter_descriptor::Unit as CounterUnit;
+pub use perfetto_protos::track_event::track_event::legacy_event::{
+    FlowDirection, InstantEventScope,
+};
+
+// Fields added after the latest published `perfetto_protos` Rust crate. Keeping
+// the official numbers here makes their unknown-field encoding easy to audit.
+const TRACK_DESCRIPTOR_SIBLING_MERGE_BEHAVIOR_FIELD: u32 = 15;
+const TRACK_DESCRIPTOR_SIBLING_MERGE_KEY_FIELD: u32 = 16;
+const TRACK_DESCRIPTOR_SIBLING_MERGE_KEY_INT_FIELD: u32 = 17;
+const FRAME_SOURCE_PATH_IID_FIELD: u32 = 5;
+const FRAME_LINE_NUMBER_FIELD: u32 = 6;
+const FRAME_KIND_FIELD: u32 = 7;
+const FRAME_KIND_STRING_FIELD: u32 = 8;
+const TRACK_EVENT_CALLSTACK_FIELD: u32 = 55;
+const TRACK_EVENT_CALLSTACK_IID_FIELD: u32 = 56;
+
+/// Exact upstream values for `TrackDescriptor.sibling_merge_behavior`.
+///
+/// `perfetto_protos` 0.51.1 predates these fields, so the writer stores them as
+/// protobuf unknown fields while preserving their official numbers and types.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(u64)]
+pub enum SiblingMergeBehavior {
+    #[default]
+    Unspecified = 0,
+    ByTrackName = 1,
+    None = 2,
+    BySiblingMergeKey = 3,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum SiblingMergeKey {
+    String(String),
+    Integer(u64),
+}
+
+impl From<String> for SiblingMergeKey {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<&str> for SiblingMergeKey {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_owned())
+    }
+}
+
+impl From<u64> for SiblingMergeKey {
+    fn from(value: u64) -> Self {
+        Self::Integer(value)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct SourceLocation {
+    pub file_name: String,
+    pub function_name: Option<String>,
+    pub line_number: Option<u32>,
+}
+
+impl SourceLocation {
+    pub fn new(file_name: impl Into<String>) -> Self {
+        Self {
+            file_name: file_name.into(),
+            function_name: None,
+            line_number: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct StackMapping {
+    pub path: Vec<String>,
+    pub build_id: Option<Vec<u8>>,
+    pub exact_offset: Option<u64>,
+    pub start_offset: Option<u64>,
+    pub start: Option<u64>,
+    pub end: Option<u64>,
+    pub load_bias: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u64)]
+pub enum FrameKind {
+    Unknown = 0,
+    Native = 1,
+    Kernel = 2,
+    Interpreted = 3,
+    Jit = 4,
+    Gc = 5,
+    Runtime = 6,
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct StackFrame {
+    pub function_name: Option<String>,
+    pub mapping: Option<StackMapping>,
+    pub rel_pc: Option<u64>,
+    pub source_path: Option<String>,
+    pub line_number: Option<u32>,
+    pub kind: Option<FrameKind>,
+    pub kind_string: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct InlineFrame {
+    pub function_name: String,
+    pub source_file: Option<String>,
+    pub line_number: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DebugValue {
+    Bool(bool),
+    Int(i64),
+    UInt(u64),
+    Double(f64),
+    String(String),
+    Pointer(u64),
+    Dictionary(Vec<(String, DebugValue)>),
+    Array(Vec<DebugValue>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum LegacyId {
+    Unscoped(u64),
+    Local(u64),
+    Global(u64),
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LegacyEvent {
+    pub phase: i32,
+    pub duration_us: Option<i64>,
+    pub thread_duration_us: Option<i64>,
+    pub thread_instruction_delta: Option<i64>,
+    pub id: Option<LegacyId>,
+    pub id_scope: Option<String>,
+    pub use_async_tts: Option<bool>,
+    pub bind_id: Option<u64>,
+    pub bind_to_enclosing: Option<bool>,
+    pub flow_direction: Option<FlowDirection>,
+    pub instant_event_scope: Option<InstantEventScope>,
+    pub pid_override: Option<i32>,
+    pub tid_override: Option<i32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ClockReading {
+    pub clock_id: u32,
+    pub timestamp: u64,
+    pub is_incremental: Option<bool>,
+    pub unit_multiplier_ns: Option<u64>,
+}
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub(crate) enum InternID {
@@ -84,7 +245,14 @@ pub struct Context<W: io::Write> {
     debug_annotation_names: Intern<SmolStr>,
     debug_annotation_str_values: Intern<SmolStr>,
     categories: Intern<SmolStr>,
-    source_locations: Intern<(SmolStr, u32)>,
+    source_locations: Intern<SourceLocation>,
+    build_ids: Intern<Vec<u8>>,
+    mapping_paths: Intern<SmolStr>,
+    source_paths: Intern<SmolStr>,
+    function_names: Intern<SmolStr>,
+    mappings: Intern<StackMapping>,
+    frames: Intern<StackFrame>,
+    callstacks: Intern<Vec<u64>>,
     trace: Trace,
     seq: u32,
     writer: io::BufWriter<W>,
@@ -114,6 +282,13 @@ where
             categories: Default::default(),
             thread_tracks: Default::default(),
             source_locations: Default::default(),
+            build_ids: Default::default(),
+            mapping_paths: Default::default(),
+            source_paths: Default::default(),
+            function_names: Default::default(),
+            mappings: Default::default(),
+            frames: Default::default(),
+            callstacks: Default::default(),
             seq: rand::random(),
             trace: Default::default(),
             next_id: 0.into(),
@@ -133,6 +308,13 @@ where
             categories: Default::default(),
             thread_tracks: Default::default(),
             source_locations: Default::default(),
+            build_ids: Default::default(),
+            mapping_paths: Default::default(),
+            source_paths: Default::default(),
+            function_names: Default::default(),
+            mappings: Default::default(),
+            frames: Default::default(),
+            callstacks: Default::default(),
             seq,
             trace: Default::default(),
             next_id: 0.into(),
@@ -178,19 +360,19 @@ where
         TrackBuilder::new(self).uuid(id)
     }
 
-    fn source_location<'a>(&'a mut self, file: impl Into<SmolStr>, line: u32) -> u64 {
-        let file = file.into();
-        let id = self.source_locations.intern((file.clone(), line));
+    fn source_location(&mut self, location: &SourceLocation) -> u64 {
+        let id = self.source_locations.intern(location.clone());
         match id {
             InternID::New(id) => {
                 let mut tp = TracePacket::new();
                 tp.interned_data
                     .mut_or_insert_default()
                     .source_locations
-                    .push(SourceLocation {
+                    .push(ProtoSourceLocation {
                         iid: Some(id),
-                        file_name: Some(file.to_string()),
-                        line_number: Some(line),
+                        file_name: Some(location.file_name.clone()),
+                        function_name: location.function_name.clone(),
+                        line_number: location.line_number,
                         ..Default::default()
                     });
                 self.push_packet(tp);
@@ -267,6 +449,252 @@ where
         }
         id
     }
+
+    fn intern_build_id(&mut self, value: &[u8]) -> u64 {
+        let value = value.to_vec();
+        let id = self.build_ids.intern(value.clone());
+        if id.new() {
+            let mut tp = TracePacket::new();
+            tp.interned_data
+                .mut_or_insert_default()
+                .build_ids
+                .push(InternedString {
+                    iid: Some(id.as_u64()),
+                    str: Some(value),
+                    ..Default::default()
+                });
+            self.push_packet(tp);
+        }
+        id.as_u64()
+    }
+
+    fn intern_mapping_path(&mut self, value: &str) -> u64 {
+        let value = SmolStr::new(value);
+        let id = self.mapping_paths.intern(value.clone());
+        if id.new() {
+            let mut tp = TracePacket::new();
+            tp.interned_data
+                .mut_or_insert_default()
+                .mapping_paths
+                .push(InternedString {
+                    iid: Some(id.as_u64()),
+                    str: Some(value.as_bytes().to_vec()),
+                    ..Default::default()
+                });
+            self.push_packet(tp);
+        }
+        id.as_u64()
+    }
+
+    fn intern_source_path(&mut self, value: &str) -> u64 {
+        let value = SmolStr::new(value);
+        let id = self.source_paths.intern(value.clone());
+        if id.new() {
+            let mut tp = TracePacket::new();
+            tp.interned_data
+                .mut_or_insert_default()
+                .source_paths
+                .push(InternedString {
+                    iid: Some(id.as_u64()),
+                    str: Some(value.as_bytes().to_vec()),
+                    ..Default::default()
+                });
+            self.push_packet(tp);
+        }
+        id.as_u64()
+    }
+
+    fn intern_function_name(&mut self, value: &str) -> u64 {
+        let value = SmolStr::new(value);
+        let id = self.function_names.intern(value.clone());
+        if id.new() {
+            let mut tp = TracePacket::new();
+            tp.interned_data
+                .mut_or_insert_default()
+                .function_names
+                .push(InternedString {
+                    iid: Some(id.as_u64()),
+                    str: Some(value.as_bytes().to_vec()),
+                    ..Default::default()
+                });
+            self.push_packet(tp);
+        }
+        id.as_u64()
+    }
+
+    fn intern_mapping(&mut self, mapping: &StackMapping) -> u64 {
+        let id = self.mappings.intern(mapping.clone());
+        if !id.new() {
+            return id.as_u64();
+        }
+
+        let mut proto = Mapping {
+            iid: Some(id.as_u64()),
+            exact_offset: mapping.exact_offset,
+            start_offset: mapping.start_offset,
+            start: mapping.start,
+            end: mapping.end,
+            load_bias: mapping.load_bias,
+            ..Default::default()
+        };
+        if let Some(build_id) = &mapping.build_id {
+            proto.build_id = Some(self.intern_build_id(build_id));
+        }
+        proto.path_string_ids = mapping
+            .path
+            .iter()
+            .map(|component| self.intern_mapping_path(component))
+            .collect();
+
+        let mut tp = TracePacket::new();
+        tp.interned_data
+            .mut_or_insert_default()
+            .mappings
+            .push(proto);
+        self.push_packet(tp);
+        id.as_u64()
+    }
+
+    fn intern_frame(&mut self, frame: &StackFrame) -> u64 {
+        let id = self.frames.intern(frame.clone());
+        if !id.new() {
+            return id.as_u64();
+        }
+
+        let mut proto = ProtoFrame {
+            iid: Some(id.as_u64()),
+            rel_pc: frame.rel_pc,
+            ..Default::default()
+        };
+        if let Some(function_name) = &frame.function_name {
+            proto.function_name_id = Some(self.intern_function_name(function_name));
+        }
+        if let Some(mapping) = &frame.mapping {
+            proto.mapping_id = Some(self.intern_mapping(mapping));
+        }
+        if let Some(source_path) = &frame.source_path {
+            proto.special_fields.mut_unknown_fields().add_varint(
+                FRAME_SOURCE_PATH_IID_FIELD,
+                self.intern_source_path(source_path),
+            );
+        }
+        if let Some(line_number) = frame.line_number {
+            proto
+                .special_fields
+                .mut_unknown_fields()
+                .add_varint(FRAME_LINE_NUMBER_FIELD, u64::from(line_number));
+        }
+        if let Some(kind_string) = &frame.kind_string {
+            proto
+                .special_fields
+                .mut_unknown_fields()
+                .add_length_delimited(FRAME_KIND_STRING_FIELD, kind_string.as_bytes().to_vec());
+        } else if let Some(kind) = frame.kind {
+            proto
+                .special_fields
+                .mut_unknown_fields()
+                .add_varint(FRAME_KIND_FIELD, kind as u64);
+        }
+
+        let mut tp = TracePacket::new();
+        tp.interned_data.mut_or_insert_default().frames.push(proto);
+        self.push_packet(tp);
+        id.as_u64()
+    }
+
+    fn intern_callstack(&mut self, frames: &[StackFrame]) -> u64 {
+        let frame_ids: Vec<u64> = frames
+            .iter()
+            .map(|frame| self.intern_frame(frame))
+            .collect();
+        let id = self.callstacks.intern(frame_ids.clone());
+        if id.new() {
+            let mut tp = TracePacket::new();
+            tp.interned_data
+                .mut_or_insert_default()
+                .callstacks
+                .push(ProtoCallstack {
+                    iid: Some(id.as_u64()),
+                    frame_ids,
+                    ..Default::default()
+                });
+            self.push_packet(tp);
+        }
+        id.as_u64()
+    }
+
+    fn encode_debug_value(&mut self, name: Option<&str>, value: &DebugValue) -> DebugAnnotation {
+        let mut annotation = DebugAnnotation::new();
+        if let Some(name) = name {
+            annotation.set_name_iid(self.intern_debug_annotation_name(name).as_u64());
+        }
+        match value {
+            DebugValue::Bool(value) => annotation.set_bool_value(*value),
+            DebugValue::Int(value) => annotation.set_int_value(*value),
+            DebugValue::UInt(value) => annotation.set_uint_value(*value),
+            DebugValue::Double(value) => annotation.set_double_value(*value),
+            DebugValue::String(value) => annotation.set_string_value_iid(
+                self.intern_debug_annotation_str_value(value.as_str())
+                    .as_u64(),
+            ),
+            DebugValue::Pointer(value) => annotation.set_pointer_value(*value),
+            DebugValue::Dictionary(entries) => {
+                annotation.dict_entries = entries
+                    .iter()
+                    .map(|(key, value)| self.encode_debug_value(Some(key), value))
+                    .collect();
+            }
+            DebugValue::Array(values) => {
+                annotation.array_values = values
+                    .iter()
+                    .map(|value| self.encode_debug_value(None, value))
+                    .collect();
+            }
+        }
+        annotation
+    }
+
+    pub fn set_default_timestamp_clock(&mut self, clock_id: u32) {
+        let mut defaults = TracePacketDefaults::new();
+        defaults.set_timestamp_clock_id(clock_id);
+        let mut tp = TracePacket::new();
+        tp.trace_packet_defaults = MessageField::some(defaults);
+        self.push_packet(tp);
+    }
+
+    pub fn add_clock_snapshot(
+        &mut self,
+        readings: &[ClockReading],
+        primary_trace_clock: Option<BuiltinClock>,
+    ) -> Result<()> {
+        if readings.is_empty() {
+            bail!("a clock snapshot requires at least one reading");
+        }
+
+        let mut snapshot = ClockSnapshot::new();
+        if let Some(primary) = primary_trace_clock {
+            snapshot.set_primary_trace_clock(primary);
+        }
+        for reading in readings {
+            if reading.unit_multiplier_ns.is_some()
+                && primary_trace_clock.map(|clock| clock as u32) == Some(reading.clock_id)
+            {
+                bail!("unit_multiplier_ns is unsupported on the primary trace clock");
+            }
+            snapshot.clocks.push(Clock {
+                clock_id: Some(reading.clock_id),
+                timestamp: Some(reading.timestamp),
+                is_incremental: reading.is_incremental,
+                unit_multiplier_ns: reading.unit_multiplier_ns,
+                ..Default::default()
+            });
+        }
+
+        let mut tp = TracePacket::new();
+        tp.set_clock_snapshot(snapshot);
+        self.push_packet(tp);
+        Ok(())
+    }
 }
 
 impl<'a, W: Write> Context<W> {
@@ -313,6 +741,33 @@ impl<'a, W: io::Write> TrackBuilder<'a, W> {
     }
     pub fn parent_uuid(mut self, id: u64) -> Self {
         self.track.set_parent_uuid(id);
+        self
+    }
+
+    pub fn sibling_merge_behavior(mut self, behavior: SiblingMergeBehavior) -> Self {
+        self.track.special_fields.mut_unknown_fields().add_varint(
+            TRACK_DESCRIPTOR_SIBLING_MERGE_BEHAVIOR_FIELD,
+            behavior as u64,
+        );
+        self
+    }
+
+    pub fn sibling_merge_key(mut self, key: impl Into<String>) -> Self {
+        self.track
+            .special_fields
+            .mut_unknown_fields()
+            .add_length_delimited(
+                TRACK_DESCRIPTOR_SIBLING_MERGE_KEY_FIELD,
+                key.into().into_bytes(),
+            );
+        self
+    }
+
+    pub fn sibling_merge_key_int(mut self, key: u64) -> Self {
+        self.track
+            .special_fields
+            .mut_unknown_fields()
+            .add_varint(TRACK_DESCRIPTOR_SIBLING_MERGE_KEY_INT_FIELD, key);
         self
     }
 
@@ -394,6 +849,8 @@ impl<'a, W: io::Write> TrackBuilder<'a, W> {
 
 pub struct EventBuilder<'a, W: io::Write> {
     event: TrackEvent,
+    packet_timestamp_ns: Option<u64>,
+    timestamp_clock_id: Option<u32>,
     ctx: &'a mut Context<W>,
 }
 
@@ -401,12 +858,24 @@ impl<'a, W: io::Write> EventBuilder<'a, W> {
     fn new(ctx: &'a mut Context<W>) -> Self {
         Self {
             event: TrackEvent::new(),
+            packet_timestamp_ns: None,
+            timestamp_clock_id: None,
             ctx,
         }
     }
 
     pub fn timestamp_us(&mut self, us: i64) {
         self.event.set_timestamp_absolute_us(us);
+    }
+
+    /// Set the native `TracePacket.timestamp` in nanoseconds.
+    pub fn timestamp_ns(&mut self, ns: u64) {
+        self.packet_timestamp_ns = Some(ns);
+    }
+
+    /// Override the timestamp clock for this event packet.
+    pub fn timestamp_clock_id(&mut self, clock_id: u32) {
+        self.timestamp_clock_id = Some(clock_id);
     }
 
     pub fn now(&mut self) {
@@ -438,9 +907,18 @@ impl<'a, W: io::Write> EventBuilder<'a, W> {
         self.event.category_iids.push(id.into());
     }
 
-    pub fn source_location(&mut self, file: impl Into<SmolStr>, line: u32) {
-        let loc = self.ctx.source_location(file, line);
-        self.event.set_source_location_iid(loc);
+    pub fn source_location(&mut self, location: &SourceLocation, intern: bool) {
+        if intern {
+            let loc = self.ctx.source_location(location);
+            self.event.set_source_location_iid(loc);
+        } else {
+            self.event.set_source_location(ProtoSourceLocation {
+                file_name: Some(location.file_name.clone()),
+                function_name: location.function_name.clone(),
+                line_number: location.line_number,
+                ..Default::default()
+            });
+        }
     }
 
     pub fn name(&mut self, name: impl Into<SmolStr>) {
@@ -497,6 +975,82 @@ impl<'a, W: io::Write> EventBuilder<'a, W> {
         self.event.debug_annotations.push(da);
     }
 
+    pub fn debug_value(&mut self, name: &str, value: &DebugValue) {
+        let annotation = self.ctx.encode_debug_value(Some(name), value);
+        self.event.debug_annotations.push(annotation);
+    }
+
+    pub fn inline_callstack(&mut self, frames: &[InlineFrame]) {
+        let mut callstack = Vec::new();
+        {
+            let mut output = protobuf::CodedOutputStream::vec(&mut callstack);
+            for frame in frames {
+                let mut encoded_frame = Vec::new();
+                {
+                    let mut frame_output = protobuf::CodedOutputStream::vec(&mut encoded_frame);
+                    frame_output
+                        .write_string(1, &frame.function_name)
+                        .expect("writing to Vec cannot fail");
+                    if let Some(source_file) = &frame.source_file {
+                        frame_output
+                            .write_string(2, source_file)
+                            .expect("writing to Vec cannot fail");
+                    }
+                    if let Some(line_number) = frame.line_number {
+                        frame_output
+                            .write_uint32(3, line_number)
+                            .expect("writing to Vec cannot fail");
+                    }
+                    frame_output.flush().expect("writing to Vec cannot fail");
+                }
+                output
+                    .write_bytes(1, &encoded_frame)
+                    .expect("writing to Vec cannot fail");
+            }
+            output.flush().expect("writing to Vec cannot fail");
+        }
+        self.event
+            .special_fields
+            .mut_unknown_fields()
+            .add_length_delimited(TRACK_EVENT_CALLSTACK_FIELD, callstack);
+    }
+
+    pub fn callstack(&mut self, frames: &[StackFrame]) {
+        let iid = self.ctx.intern_callstack(frames);
+        self.event
+            .special_fields
+            .mut_unknown_fields()
+            .add_varint(TRACK_EVENT_CALLSTACK_IID_FIELD, iid);
+    }
+
+    pub fn legacy(&mut self, legacy: &LegacyEvent) {
+        let mut proto = ProtoLegacyEvent {
+            phase: Some(legacy.phase),
+            duration_us: legacy.duration_us,
+            thread_duration_us: legacy.thread_duration_us,
+            thread_instruction_delta: legacy.thread_instruction_delta,
+            id_scope: legacy.id_scope.clone(),
+            use_async_tts: legacy.use_async_tts,
+            bind_id: legacy.bind_id,
+            bind_to_enclosing: legacy.bind_to_enclosing,
+            pid_override: legacy.pid_override,
+            tid_override: legacy.tid_override,
+            ..Default::default()
+        };
+        proto.id = legacy.id.map(|id| match id {
+            LegacyId::Unscoped(value) => legacy_event::Id::UnscopedId(value),
+            LegacyId::Local(value) => legacy_event::Id::LocalId(value),
+            LegacyId::Global(value) => legacy_event::Id::GlobalId(value),
+        });
+        if let Some(direction) = legacy.flow_direction {
+            proto.set_flow_direction(direction);
+        }
+        if let Some(scope) = legacy.instant_event_scope {
+            proto.set_instant_event_scope(scope);
+        }
+        self.event.legacy_event = MessageField::some(proto);
+    }
+
     pub fn track_uuid(&mut self, id: u64) {
         self.event.set_track_uuid(id);
     }
@@ -532,6 +1086,16 @@ impl<'a, W: io::Write> EventBuilder<'a, W> {
         self
     }
 
+    pub fn with_timestamp_ns(mut self, ns: u64) -> Self {
+        self.timestamp_ns(ns);
+        self
+    }
+
+    pub fn with_timestamp_clock_id(mut self, clock_id: u32) -> Self {
+        self.timestamp_clock_id(clock_id);
+        self
+    }
+
     pub fn with_now(mut self) -> Self {
         self.now();
         self
@@ -562,8 +1126,8 @@ impl<'a, W: io::Write> EventBuilder<'a, W> {
         self
     }
 
-    pub fn with_source_location(mut self, file: impl Into<SmolStr>, line: u32) -> Self {
-        self.source_location(file, line);
+    pub fn with_source_location(mut self, location: &SourceLocation, intern: bool) -> Self {
+        self.source_location(location, intern);
         self
     }
 
@@ -643,6 +1207,12 @@ impl<'a, W: io::Write> EventBuilder<'a, W> {
             self.event.has_track_uuid(),
             "track_uuid is required for a track event"
         );
+        if let Some(timestamp) = self.packet_timestamp_ns {
+            tp.set_timestamp(timestamp);
+        }
+        if let Some(clock_id) = self.timestamp_clock_id {
+            tp.set_timestamp_clock_id(clock_id);
+        }
         tp.set_track_event(self.event);
         self.ctx.push_packet(tp);
     }

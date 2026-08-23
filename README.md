@@ -10,6 +10,7 @@ This is a multi-language project with implementations in different languages:
 
 - `py/` - Python implementation
 - `cpp/` - C++ header-only implementation
+- `rust/retrobus-perfetto/` - Rust implementation
 - `compact/` - Allocation-free C recorder, C++ RAII wrapper, and `.rbct` format
 - `ts/` - TypeScript protobuf bindings (Node/TS, run `npm run gen:proto` in `ts/` to generate)
 - `proto/` - Shared protocol buffer definitions
@@ -138,6 +139,7 @@ retrobus::resolve_interned_trace_inplace(trace);         // mutates in-place
 
 - [Python Implementation](py/README.md)
 - [C++ Design Document](cpp-header-only-design.md)
+- [Rust Implementation](rust/retrobus-perfetto/README.md)
 - [TypeScript Protobuf Bindings](ts/README.md)
 - [Protocol Buffer Definitions](proto/README.md)
 - [Perfetto Fidelity Guide](perfetto-fidelity-guide.md)
