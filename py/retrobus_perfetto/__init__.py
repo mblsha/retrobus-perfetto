@@ -39,7 +39,23 @@ from .compact_profile import (
     profile_compact_corpus,
     profile_compact_trace,
 )
-from .annotations import DebugAnnotationBuilder, TrackEventWrapper
+from .annotations import (
+    DebugAnnotationBuilder,
+    DebugAnnotationCycleError,
+    DebugAnnotationDepthError,
+    DebugAnnotationError,
+    TrackEventWrapper,
+)
+from .models import (
+    ClockReading,
+    InlineFrame,
+    LegacyEvent,
+    Pointer,
+    SourceLocation,
+    StackFrame,
+    StackMapping,
+    UInt,
+)
 from .oracle_index import (
     IndexStats,
     TracePacketRecord,
@@ -48,7 +64,14 @@ from .oracle_index import (
     iter_trace_packets,
     verify_trace_index,
 )
-from .reader import resolve_interned_trace
+from .reader import (
+    ResolvedCallstack,
+    ResolvedFrame,
+    ResolvedMapping,
+    ResolvedTrackEvent,
+    iter_resolved_track_events,
+    resolve_interned_trace,
+)
 from .merge import merge_perfetto_traces
 
 # Make proto module available for direct import
@@ -71,15 +94,31 @@ __all__ = [
     "CompactTraceReader",
     "CompactTrackSchema",
     "DebugAnnotationBuilder",
+    "DebugAnnotationCycleError",
+    "DebugAnnotationDepthError",
+    "DebugAnnotationError",
+    "ClockReading",
+    "InlineFrame",
     "IndexStats",
     "TracePacketRecord",
     "TrackEventWrapper",
+    "LegacyEvent",
+    "Pointer",
+    "ResolvedCallstack",
+    "ResolvedFrame",
+    "ResolvedMapping",
+    "ResolvedTrackEvent",
+    "SourceLocation",
+    "StackFrame",
+    "StackMapping",
+    "UInt",
     "VerifyStats",
     "build_trace_index",
     "aggregate_density_reports",
     "compact_trace_to_builder",
     "convert_compact_trace",
     "iter_trace_packets",
+    "iter_resolved_track_events",
     "merge_perfetto_traces",
     "model_compact_trace",
     "profile_compact_corpus",

@@ -11,6 +11,12 @@ package perfetto.protos;
 // (field numbers + wire types) so that traces are readable by the Perfetto UI
 // and trace processor.
 
+// Interned category of a TrackEvent (TrackEvent.category_iids).
+message EventCategory {
+  optional uint64 iid = 1;
+  optional string name = 2;
+}
+
 // Interned name of a TrackEvent (TrackEvent.name_iid).
 message EventName {
   optional uint64 iid = 1;
@@ -23,6 +29,12 @@ message DebugAnnotationName {
   optional string name = 2;
 }
 
+// Interned full name of an embedded DebugAnnotation proto value.
+message DebugAnnotationValueTypeName {
+  optional uint64 iid = 1;
+  optional string name = 2;
+}
+
 // Generic interned string payload (used by DebugAnnotation.string_value_iid).
 // Upstream uses bytes (not string) to avoid UTF-8 enforcement in some tables.
 message InternedString {
@@ -30,11 +42,63 @@ message InternedString {
   optional bytes str = 2;
 }
 
+// Executable file mapping used by interned profiling frames.
+message Mapping {
+  optional uint64 iid = 1;
+  optional uint64 build_id = 2;
+  optional uint64 start_offset = 3;
+  optional uint64 start = 4;
+  optional uint64 end = 5;
+  optional uint64 load_bias = 6;
+  repeated uint64 path_string_ids = 7;
+  optional uint64 exact_offset = 8;
+}
+
+// A symbolized or unsymbolized frame used by an interned Callstack.
+message Frame {
+  optional uint64 iid = 1;
+  optional uint64 function_name_id = 2;
+  optional uint64 mapping_id = 3;
+  optional uint64 rel_pc = 4;
+  optional uint64 source_path_iid = 5;
+  optional uint32 line_number = 6;
+
+  enum Kind {
+    KIND_UNKNOWN = 0;
+    KIND_NATIVE = 1;
+    KIND_KERNEL = 2;
+    KIND_INTERPRETED = 3;
+    KIND_JIT = 4;
+    KIND_GC = 5;
+    KIND_RUNTIME = 6;
+  }
+  oneof kind_field {
+    Kind kind = 7;
+    string kind_str = 8;
+  }
+}
+
+// A program callstack. Frame IDs are ordered bottom/outermost first.
+message Callstack {
+  optional uint64 iid = 1;
+  repeated uint64 frame_ids = 2;
+}
+
 // New dictionary entries for the interning indices on a packet sequence.
 // Note: Field numbers must match upstream Perfetto protos.
 message InternedData {
+  repeated EventCategory event_categories = 1;
   repeated EventName event_names = 2;
   repeated DebugAnnotationName debug_annotation_names = 3;
+  repeated SourceLocation source_locations = 4;
+  repeated InternedString function_names = 5;
+  repeated Frame frames = 6;
+  repeated Callstack callstacks = 7;
+  repeated InternedString build_ids = 16;
+  repeated InternedString mapping_paths = 17;
+  repeated InternedString source_paths = 18;
+  repeated Mapping mappings = 19;
+  repeated DebugAnnotationValueTypeName debug_annotation_value_type_names = 27;
   repeated InternedString debug_annotation_string_values = 29;
 }
 
@@ -232,6 +296,20 @@ message TrackDescriptor {
 
   optional ProcessDescriptor process = 3;
   optional ThreadDescriptor thread = 4;
+
+  // Controls whether eligible sibling TrackEvent tracks become one logical
+  // nestable track in trace processor and the Perfetto UI.
+  enum SiblingMergeBehavior {
+    SIBLING_MERGE_BEHAVIOR_UNSPECIFIED = 0;
+    SIBLING_MERGE_BEHAVIOR_BY_TRACK_NAME = 1;
+    SIBLING_MERGE_BEHAVIOR_NONE = 2;
+    SIBLING_MERGE_BEHAVIOR_BY_SIBLING_MERGE_KEY = 3;
+  }
+  optional SiblingMergeBehavior sibling_merge_behavior = 15;
+  oneof sibling_merge_key_field {
+    string sibling_merge_key = 16;
+    uint64 sibling_merge_key_int = 17;
+  }
 }
 
 message TrackEvent {
@@ -362,6 +440,23 @@ message TrackEvent {
   // "terminating_flow_ids" to reduce memory consumption.
   repeated fixed64 terminating_flow_ids = 48;
 
+  // Callstack associated with this event. Interned callstacks retain mapping,
+  // address, build ID, source path and symbol information; inline callstacks
+  // are convenient for unique, already-symbolized stacks.
+  oneof callstack_field {
+    InlineCallstack callstack = 55;
+    uint64 callstack_iid = 56;
+  }
+
+  message InlineCallstack {
+    message Frame {
+      optional string function_name = 1;
+      optional string source_file = 2;
+      optional uint32 line_number = 3;
+    }
+    repeated Frame frames = 1;
+  }
+
   // ---------------------------------------------------------------------------
   // TrackEvent arguments:
   // ---------------------------------------------------------------------------
@@ -396,6 +491,45 @@ message TrackEvent {
     // Interned field.
     uint64 source_location_iid = 34;
   }
+
+  // Lossless carrier for uncommon Chrome legacy phases and attributes. Native
+  // TrackEvent slices, instants, counters and flows remain the preferred API.
+  message LegacyEvent {
+    optional uint64 name_iid = 1;
+    optional int32 phase = 2;
+    optional int64 duration_us = 3;
+    optional int64 thread_duration_us = 4;
+    reserved 5;
+    oneof id {
+      uint64 unscoped_id = 6;
+      uint64 local_id = 10;
+      uint64 global_id = 11;
+    }
+    optional string id_scope = 7;
+    optional uint64 bind_id = 8;
+    optional bool use_async_tts = 9;
+    optional bool bind_to_enclosing = 12;
+
+    enum FlowDirection {
+      FLOW_UNSPECIFIED = 0;
+      FLOW_IN = 1;
+      FLOW_OUT = 2;
+      FLOW_INOUT = 3;
+    }
+    optional FlowDirection flow_direction = 13;
+
+    enum InstantEventScope {
+      SCOPE_UNSPECIFIED = 0;
+      SCOPE_GLOBAL = 1;
+      SCOPE_PROCESS = 2;
+      SCOPE_THREAD = 3;
+    }
+    optional InstantEventScope instant_event_scope = 14;
+    optional int64 thread_instruction_delta = 15;
+    optional int32 pid_override = 18;
+    optional int32 tid_override = 19;
+  }
+  optional LegacyEvent legacy_event = 6;
 
   // optional ChromeMessagePump chrome_message_pump = 35;
   // optional ChromeMojoEventInfo chrome_mojo_event_info = 38;
@@ -566,6 +700,46 @@ message TracePacketDefaults {
   optional TrackEventDefaults track_event_defaults = 11;
 }
 
+// Builtin clock domains used in Perfetto traces.
+enum BuiltinClock {
+  BUILTIN_CLOCK_UNKNOWN = 0;
+  BUILTIN_CLOCK_REALTIME = 1;
+  BUILTIN_CLOCK_REALTIME_COARSE = 2;
+  BUILTIN_CLOCK_MONOTONIC = 3;
+  BUILTIN_CLOCK_MONOTONIC_COARSE = 4;
+  BUILTIN_CLOCK_MONOTONIC_RAW = 5;
+  BUILTIN_CLOCK_BOOTTIME = 6;
+  BUILTIN_CLOCK_TSC = 9;
+  BUILTIN_CLOCK_PERF = 10;
+  BUILTIN_CLOCK_TRACE_FILE = 11;
+  BUILTIN_CLOCK_MAX_ID = 63;
+  reserved 7, 8;
+}
+
+// A simultaneous set of clock readings used to align timestamp domains.
+message ClockSnapshot {
+  message Clock {
+    // Deprecated upstream alias retained for exact wire/API compatibility.
+    enum BuiltinClocks {
+      UNKNOWN = 0;
+      REALTIME = 1;
+      REALTIME_COARSE = 2;
+      MONOTONIC = 3;
+      MONOTONIC_COARSE = 4;
+      MONOTONIC_RAW = 5;
+      BOOTTIME = 6;
+      BUILTIN_CLOCK_MAX_ID = 63;
+      reserved 7, 8;
+    }
+    optional uint32 clock_id = 1;
+    optional uint64 timestamp = 2;
+    optional bool is_incremental = 3;
+    optional uint64 unit_multiplier_ns = 4;
+  }
+  repeated Clock clocks = 1;
+  optional BuiltinClock primary_trace_clock = 2;
+}
+
 // TracePacket is the root object of a Perfetto trace.
 // A Perfetto trace is a linear sequence of TracePacket(s).
 //
@@ -604,6 +778,7 @@ message TracePacket {
   optional uint32 timestamp_clock_id = 58;
 
   oneof data {
+    ClockSnapshot clock_snapshot = 6;
     TrackEvent track_event = 11;
     FrameTimelineEvent frame_timeline_event = 76;
 

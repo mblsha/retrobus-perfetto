@@ -327,7 +327,7 @@ def test_annotation_type_detection():
         "test_bool": True,
         "test_float": 3.14,
         "test_string": "hello",
-        "test_object": {"key": "value"}  # Will be converted to string
+        "test_object": {"key": "value"},
     })
     
     # Verify annotations in trace
@@ -345,7 +345,10 @@ def test_annotation_type_detection():
     assert ann_dict["test_bool"].bool_value is True
     assert ann_dict["test_float"].double_value == 3.14
     assert ann_dict["test_string"].string_value == "hello"
-    assert ann_dict["test_object"].string_value == "{'key': 'value'}"
+    nested = ann_dict["test_object"]
+    assert len(nested.dict_entries) == 1
+    assert nested.dict_entries[0].name == "key"
+    assert nested.dict_entries[0].string_value == "value"
 
 
 def test_pointer_annotation_heuristic():
