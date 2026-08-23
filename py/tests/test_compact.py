@@ -523,6 +523,18 @@ def test_read_and_reconstruct_all_generic_event_kinds(
 
     parsed = perfetto_pb2.Trace()
     parsed.ParseFromString(builder.serialize())
+    categories = {
+        event.name: list(event.categories)
+        for packet in parsed.packet
+        if packet.HasField("track_event")
+        for event in (packet.track_event,)
+        if event.name in {"work", "fault", "request", "transfer", "address"}
+    }
+    assert categories["work"] == ["runtime"]
+    assert categories["fault"] == ["runtime"]
+    assert categories["request"] == ["io"]
+    assert categories["transfer"] == ["io"]
+    assert categories["address"] == ["runtime"]
     typed_annotations = {
         event.name: [
             annotation.WhichOneof("value") for annotation in event.debug_annotations

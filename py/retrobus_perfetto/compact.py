@@ -1641,7 +1641,7 @@ class _Action:
 
 def _add_category(wrapper: TrackEventWrapper, category: str) -> None:
     if category:
-        wrapper.event.categories.append(category)
+        wrapper.add_category(category)
 
 
 def _add_typed_annotation(
@@ -2047,7 +2047,7 @@ def compact_trace_to_builder(
             wrapper = builder.add_instant_event(
                 clock_track, "clock sync", action.timestamp_ns
             )
-            wrapper.event.categories.append("clock")
+            wrapper.add_category("clock")
             wrapper.add_annotations(
                 {
                     "generation": action.sync.generation,
