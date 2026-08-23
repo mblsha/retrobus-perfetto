@@ -1,0 +1,37 @@
+name: TypeScript CI
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'proto/**'
+      - 'ts/**'
+      - '.github/workflows/typescript-ci.yml'
+  pull_request:
+    paths:
+      - 'proto/**'
+      - 'ts/**'
+      - '.github/workflows/typescript-ci.yml'
+
+defaults:
+  run:
+    working-directory: ts
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ts/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate bindings and test round-trip compatibility
+        run: npm test

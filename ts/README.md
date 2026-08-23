@@ -10,6 +10,7 @@ Python/C++ implementations so Node/TS tooling can emit and parse Perfetto traces
 cd ts
 npm install
 npm run gen:proto
+npm test
 ```
 
 Generated files land in `ts/src/proto/` (gitignored):
@@ -17,6 +18,9 @@ Generated files land in `ts/src/proto/` (gitignored):
 - `perfetto_pb.d.ts` (TypeScript types)
 
 Run `npm run gen:proto` before tests or when updating `proto/perfetto.proto`.
+`npm test` regenerates the bindings and round-trips the profiler-fidelity fields,
+including interned callstacks, structured annotations, sibling merging, legacy
+events, and clock snapshots.
 
 ## Usage
 
