@@ -27,10 +27,31 @@ fn main() -> anyhow::Result<()> {
 
 ### API highlights
 - `PerfettoTraceBuilder::add_thread(name)` creates a thread track under the process.
+- `add_track` exposes the official sibling-merge behavior/key contract;
+  `add_merged_track_lane` creates backing lanes for overlapping work.
 - `begin_slice` / `end_slice` emit duration spans; `add_instant_event` emits point events.
 - `add_counter_track` + `update_counter` for counters.
 - `add_flow` to connect events across tracks.
-- `TrackEventBuilder` adds annotations with automatic pointer detection (`pc`, `_addr`, `_pointer`, etc.).
+- `TrackEventBuilder` adds interned categories, source locations, inline or
+  interned native callstacks, and typed recursive annotations.
+- `add_legacy_event` preserves uncommon Chrome phases and payloads; common
+  slices, instants, counters, and flows should use the native methods above.
+- `set_default_timestamp_clock`, per-event `timestamp_clock_id`, and
+  `add_clock_snapshot` correlate producer clocks with monotonic/realtime clocks.
+
+Structured annotations use `AnnotationValue::dictionary` and
+`AnnotationValue::array`. Rust's owned value tree cannot contain reference
+cycles. `try_add_annotation` validates the complete tree against the configured
+depth before changing the event; the chaining `add_annotation` convenience
+method panics on invalid nesting.
+
+The writer interns repeated category, annotation, source, mapping, frame, and
+callstack data on its trusted packet sequence. The published
+`perfetto_protos` crate currently predates TrackEvent callstacks and sibling
+merge fields, so those newer official fields are carried through protobuf
+unknown-field storage with their exact field numbers and wire types. Tests parse
+the resulting bytes through the repository's pinned full official Perfetto
+descriptor.
 
 ## Development
 
@@ -39,7 +60,9 @@ cargo fmt       # optional
 cargo test      # runs unit tests
 ```
 
-The crate consumes the builder on `serialize`/`save`; create a new builder per trace. Timestamps are expressed in nanoseconds in the API and converted to microseconds for Perfetto.
+The crate consumes the builder on `serialize`/`save`; create a new builder per
+trace. Timestamps are expressed in nanoseconds and emitted as native
+`TracePacket.timestamp` values.
 
 ## Reentrant tracer handle
 
