@@ -117,9 +117,18 @@ class VerifyStats:
 
 @dataclass
 class _SequenceTables:
+    event_categories: Dict[int, str] = field(default_factory=dict)
     event_names: Dict[int, str] = field(default_factory=dict)
     debug_annotation_names: Dict[int, str] = field(default_factory=dict)
     debug_annotation_string_values: Dict[int, str] = field(default_factory=dict)
+    source_locations: Dict[int, Any] = field(default_factory=dict)
+    build_ids: Dict[int, bytes] = field(default_factory=dict)
+    mapping_paths: Dict[int, str] = field(default_factory=dict)
+    source_paths: Dict[int, str] = field(default_factory=dict)
+    function_names: Dict[int, str] = field(default_factory=dict)
+    mappings: Dict[int, Any] = field(default_factory=dict)
+    frames: Dict[int, Any] = field(default_factory=dict)
+    callstacks: Dict[int, Any] = field(default_factory=dict)
     valid: bool = False
 
 
@@ -289,6 +298,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             event_type INTEGER NOT NULL,
             event_type_name TEXT NOT NULL,
             event_name TEXT NOT NULL,
+            categories_json TEXT NOT NULL,
             function_base_name TEXT NOT NULL,
             timestamp_ns INTEGER,
             event_kind TEXT,
@@ -309,6 +319,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             registers_json TEXT NOT NULL,
             side_effects_json TEXT,
             source_location_json TEXT,
+            callstack_json TEXT,
             has_unresolved_interning INTEGER NOT NULL,
             FOREIGN KEY(packet_id) REFERENCES packets(packet_id),
             FOREIGN KEY(source_id) REFERENCES sources(source_id)
@@ -472,17 +483,37 @@ def _sequence_tables_for_packet(
 
     if packet.previous_packet_dropped:
         tables.valid = False
+        tables.event_categories.clear()
         tables.event_names.clear()
         tables.debug_annotation_names.clear()
         tables.debug_annotation_string_values.clear()
+        tables.source_locations.clear()
+        tables.build_ids.clear()
+        tables.mapping_paths.clear()
+        tables.source_paths.clear()
+        tables.function_names.clear()
+        tables.mappings.clear()
+        tables.frames.clear()
+        tables.callstacks.clear()
 
     if flags & perfetto.TracePacket.SEQ_INCREMENTAL_STATE_CLEARED:
         tables.valid = True
+        tables.event_categories.clear()
         tables.event_names.clear()
         tables.debug_annotation_names.clear()
         tables.debug_annotation_string_values.clear()
+        tables.source_locations.clear()
+        tables.build_ids.clear()
+        tables.mapping_paths.clear()
+        tables.source_paths.clear()
+        tables.function_names.clear()
+        tables.mappings.clear()
+        tables.frames.clear()
+        tables.callstacks.clear()
 
     if packet.HasField("interned_data"):
+        for entry in packet.interned_data.event_categories:
+            tables.event_categories[entry.iid] = entry.name
         for entry in packet.interned_data.event_names:
             tables.event_names[entry.iid] = entry.name
         for entry in packet.interned_data.debug_annotation_names:
@@ -491,6 +522,18 @@ def _sequence_tables_for_packet(
             tables.debug_annotation_string_values[entry.iid] = entry.str.decode(
                 "utf-8", errors="replace"
             )
+        for entry in packet.interned_data.source_locations:
+            tables.source_locations[entry.iid] = entry
+        for entry in packet.interned_data.build_ids:
+            tables.build_ids[entry.iid] = entry.str
+        for name in ("mapping_paths", "source_paths", "function_names"):
+            table = getattr(tables, name)
+            for entry in getattr(packet.interned_data, name):
+                table[entry.iid] = entry.str.decode("utf-8", errors="replace")
+        for name in ("mappings", "frames", "callstacks"):
+            table = getattr(tables, name)
+            for entry in getattr(packet.interned_data, name):
+                table[entry.iid] = entry
 
     return tables, sequence_id, flags
 
@@ -606,16 +649,127 @@ def _resolve_event_name(event: Any, tables: _SequenceTables, flags: int) -> str:
     return tables.event_names.get(event.name_iid, f"<missing EventName iid={event.name_iid}>")
 
 
-def _extract_source_location(event: Any) -> dict[str, Any] | None:
-    if not event.HasField("source_location"):
+def _extract_categories(event: Any, tables: _SequenceTables) -> list[str]:
+    categories = list(event.categories)
+    categories.extend(
+        tables.event_categories.get(iid, f"<missing EventCategory iid={iid}>")
+        for iid in event.category_iids
+    )
+    return categories
+
+
+def _extract_source_location(
+    event: Any, tables: _SequenceTables
+) -> dict[str, Any] | None:
+    if event.HasField("source_location"):
+        location = event.source_location
+    elif event.HasField("source_location_iid"):
+        location = tables.source_locations.get(event.source_location_iid)
+        if location is None:
+            return {
+                "iid": event.source_location_iid,
+                "error": (
+                    f"<missing SourceLocation iid={event.source_location_iid}>"
+                ),
+            }
+    else:
         return None
-    location = event.source_location
     return {
         "iid": location.iid,
         "file_name": location.file_name,
         "function_name": location.function_name,
         "line_number": location.line_number,
     }
+
+
+def _extract_callstack(
+    event: Any, tables: _SequenceTables
+) -> dict[str, Any] | None:
+    if event.HasField("callstack"):
+        return {
+            "source": "inline",
+            "frames": [
+                {
+                    "function_name": frame.function_name,
+                    "source_path": frame.source_file,
+                    "line_number": frame.line_number,
+                }
+                for frame in event.callstack.frames
+            ],
+        }
+    if not event.HasField("callstack_iid"):
+        return None
+    callstack = tables.callstacks.get(event.callstack_iid)
+    if callstack is None:
+        return {
+            "source": "iid",
+            "iid": event.callstack_iid,
+            "error": f"<missing Callstack iid={event.callstack_iid}>",
+        }
+
+    frames: list[dict[str, Any]] = []
+    for frame_iid in callstack.frame_ids:
+        frame = tables.frames.get(frame_iid)
+        if frame is None:
+            frames.append(
+                {"iid": frame_iid, "error": f"<missing Frame iid={frame_iid}>"}
+            )
+            continue
+        frame_data: dict[str, Any] = {"iid": frame_iid}
+        if frame.HasField("function_name_id"):
+            frame_data["function_name"] = tables.function_names.get(
+                frame.function_name_id,
+                f"<missing FunctionName iid={frame.function_name_id}>",
+            )
+        if frame.HasField("rel_pc"):
+            frame_data["rel_pc"] = frame.rel_pc
+        if frame.HasField("source_path_iid"):
+            frame_data["source_path"] = tables.source_paths.get(
+                frame.source_path_iid,
+                f"<missing SourcePath iid={frame.source_path_iid}>",
+            )
+        if frame.HasField("line_number"):
+            frame_data["line_number"] = frame.line_number
+        if frame.HasField("kind"):
+            frame_data["kind"] = frame.kind
+        elif frame.HasField("kind_str"):
+            frame_data["kind"] = frame.kind_str
+        if frame.HasField("mapping_id"):
+            mapping = tables.mappings.get(frame.mapping_id)
+            if mapping is None:
+                frame_data["mapping"] = {
+                    "iid": frame.mapping_id,
+                    "error": f"<missing Mapping iid={frame.mapping_id}>",
+                }
+            else:
+                mapping_data: dict[str, Any] = {
+                    "iid": frame.mapping_id,
+                    "path": [
+                        tables.mapping_paths.get(
+                            path_iid, f"<missing MappingPath iid={path_iid}>"
+                        )
+                        for path_iid in mapping.path_string_ids
+                    ],
+                }
+                if mapping.HasField("build_id"):
+                    build_id = tables.build_ids.get(mapping.build_id)
+                    mapping_data["build_id"] = (
+                        build_id.hex()
+                        if build_id is not None
+                        else f"<missing BuildId iid={mapping.build_id}>"
+                    )
+                for name in (
+                    "exact_offset",
+                    "start_offset",
+                    "start",
+                    "end",
+                    "load_bias",
+                ):
+                    if mapping.HasField(name):
+                        mapping_data[name] = getattr(mapping, name)
+                frame_data["mapping"] = mapping_data
+        frames.append(frame_data)
+    return {"source": "iid", "iid": event.callstack_iid, "frames": frames}
 
 
 def _track_descriptor_name(descriptor: Any) -> str:
@@ -857,6 +1011,7 @@ def build_trace_index(
                     event = packet.track_event
                     annotations, provenance = _extract_annotations(event, tables)
                     event_name = _resolve_event_name(event, tables, flags)
+                    categories = _extract_categories(event, tables)
                     function_base_name, function_name_key = _extract_function_name(
                         event_name,
                         annotations,
@@ -877,7 +1032,8 @@ def build_trace_index(
                     track_uuid = event.track_uuid
                     track_uuid_text = _opaque_u64(track_uuid)
                     track_name = track_names.get(track_uuid, f"track_{track_uuid}")
-                    source_location = _extract_source_location(event)
+                    source_location = _extract_source_location(event, tables)
+                    callstack = _extract_callstack(event, tables)
                     side_effects = _extract_side_effects(annotations)
                     derived_provenance = {
                         "function_name_key": function_name_key,
@@ -894,8 +1050,20 @@ def build_trace_index(
                     }
                     annotations_text = _json_dump(annotations)
                     provenance_text = _json_dump(provenance)
+                    categories_text = _json_dump(categories)
+                    source_location_text = (
+                        _json_dump(source_location) if source_location is not None else ""
+                    )
+                    callstack_text = (
+                        _json_dump(callstack) if callstack is not None else ""
+                    )
                     has_unresolved_interning = "<missing " in (
-                        event_name + annotations_text + provenance_text
+                        event_name
+                        + annotations_text
+                        + provenance_text
+                        + categories_text
+                        + source_location_text
+                        + callstack_text
                     )
                     is_synthetic_reopen = (
                         event_kind == "synthetic_chunk_reopen"
@@ -917,6 +1085,7 @@ def build_trace_index(
                             event_type,
                             event_type_name,
                             event_name,
+                            categories_json,
                             function_base_name,
                             timestamp_ns,
                             event_kind,
@@ -937,8 +1106,9 @@ def build_trace_index(
                             registers_json,
                             side_effects_json,
                             source_location_json,
+                            callstack_json,
                             has_unresolved_interning
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             packet_id,
@@ -950,6 +1120,7 @@ def build_trace_index(
                             event.type,
                             TRACK_EVENT_TYPE_NAMES.get(event.type, f"event_{event.type}"),
                             event_name,
+                            categories_text,
                             function_base_name,
                             _sqlite_int64(timestamp_ns),
                             event_kind,
@@ -970,6 +1141,7 @@ def build_trace_index(
                             _json_dump(derived_registers),
                             _json_dump(side_effects.value) if side_effects.value is not None else None,
                             _json_dump(source_location) if source_location is not None else None,
+                            _json_dump(callstack) if callstack is not None else None,
                             int(has_unresolved_interning),
                         ),
                     )

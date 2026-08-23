@@ -12,7 +12,12 @@ from typing import BinaryIO
 
 import pytest
 
-from retrobus_perfetto import PerfettoTraceBuilder
+from retrobus_perfetto import (
+    PerfettoTraceBuilder,
+    SourceLocation,
+    StackFrame,
+    StackMapping,
+)
 from retrobus_perfetto.oracle_index import build_trace_index, verify_trace_index
 from retrobus_perfetto.proto import perfetto_pb2
 
@@ -58,6 +63,63 @@ def _add_int_annotation(event: object, name: str, value: int) -> None:
     annotation = event.debug_annotations.add()  # type: ignore[attr-defined]
     annotation.name = name
     annotation.uint_value = value
+
+
+def test_oracle_index_resolves_categories_source_and_callstacks(
+    tmp_path: Path,
+) -> None:
+    trace_path = tmp_path / "fidelity.perfetto-trace"
+    builder = PerfettoTraceBuilder("Profiler")
+    lane = builder.add_thread("Samples")
+    builder.add_instant_event(
+        lane, "sample", 10, categories=("cuda", "profile")
+    ).set_source_location(
+        SourceLocation("/src/cuda.cc", "launch_kernel", 88)
+    ).set_callstack(
+        [
+            StackFrame(
+                function_name="launch_kernel",
+                mapping=StackMapping(
+                    path=("usr", "lib", "libcuda.so"),
+                    build_id=b"\x01\x02build",
+                    start=0x1000,
+                    end=0x9000,
+                ),
+                rel_pc=0x123,
+                source_path="/src/cuda.cc",
+                line_number=88,
+            )
+        ]
+    )
+    _write_builder_trace(trace_path, builder)
+
+    index_path = tmp_path / "fidelity.sqlite"
+    build_trace_index([trace_path], index_path)
+    row = _rows(
+        index_path,
+        """
+        SELECT categories_json, source_location_json, callstack_json,
+               has_unresolved_interning
+        FROM track_events
+        WHERE event_name = 'sample'
+        """,
+    )[0]
+    assert json.loads(row["categories_json"]) == ["cuda", "profile"]
+    assert json.loads(row["source_location_json"]) == {
+        "file_name": "/src/cuda.cc",
+        "function_name": "launch_kernel",
+        "iid": 1,
+        "line_number": 88,
+    }
+    callstack = json.loads(row["callstack_json"])
+    assert callstack["frames"][0]["function_name"] == "launch_kernel"
+    assert callstack["frames"][0]["mapping"]["path"] == [
+        "usr",
+        "lib",
+        "libcuda.so",
+    ]
+    assert callstack["frames"][0]["mapping"]["build_id"] == "01026275696c64"
+    assert row["has_unresolved_interning"] == 0
 
 
 def test_oracle_index_pairs_nested_recursion(tmp_path: Path) -> None:

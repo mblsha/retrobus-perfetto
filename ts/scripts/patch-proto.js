@@ -17,7 +17,7 @@ if (!pattern.test(source)) {
 
 const patched = source.replace(
   pattern,
-  "import * as $protobufModule from \"protobufjs/minimal\";\n\nconst $protobuf = $protobufModule.default ?? $protobufModule;"
+  "import * as $protobufModule from \"protobufjs/minimal.js\";\n\nconst $protobuf = $protobufModule.default ?? $protobufModule;"
 );
 
 fs.writeFileSync(targetPath, patched, "utf8");
