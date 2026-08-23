@@ -12,9 +12,9 @@ parses a representative trace through that full schema.
 - **Schema support** means a producer can represent a value losslessly on the
   wire. `proto/perfetto.proto` is the authority for the compact subset, and the
   generated Python, C++, and TypeScript bindings expose those fields directly.
-- **Builder convenience** means the Python and C++ APIs automate IDs, interning,
-  packet flags, and common validation. Direct protobuf users can choose other
-  producer policies while emitting the same wire format.
+- **Builder convenience** means the Python, C++, and Rust APIs automate IDs,
+  interning, packet flags, and common validation. Direct protobuf users can
+  choose other producer policies while emitting the same wire format.
 - **Security and redaction policy belongs to the caller.** RetroBus does not
   silently remove source paths, build IDs, instruction addresses, pointer
   values, or metadata strings. Producers should redact, hash, omit, or gate
@@ -31,7 +31,7 @@ repeated names and string values.
 Categories repeat heavily in profiling traces. Interned
 `EventCategory` entries keep strings such as `cuda`, `kernel`, and `runtime`
 once per packet sequence while events carry small `category_iids` values.
-Python event methods accept `categories=(...)` and both Python and C++ expose
+Python event methods accept `categories=(...)`; Python, C++, and Rust expose
 `add_category`. Readers resolve categories with the sequence's incremental
 state; merges keep each source's dictionaries isolated by remapping its trusted
 packet sequence ID.
@@ -198,4 +198,7 @@ python3 tools/update_official_perfetto_descriptor.py
 ```
 
 Python and C++ protobuf code is generated during their supported build flows;
-TypeScript static bindings are refreshed with `npm run gen:proto` in `ts/`.
+TypeScript static bindings are refreshed and round-trip tested with `npm test`
+in `ts/`. Rust output is parsed by this same pinned full descriptor because the
+published Rust full-protobuf crate predates the newest TrackEvent callstack and
+sibling-merge fields.
