@@ -22,6 +22,8 @@ This is a multi-language project with implementations in different languages:
 - **Rich Annotations**: Support for debug data, register states, and custom metadata
 - **Multiple Track Types**: Threads, counters, and flow events
 - **String Interning (default)**: Smaller traces via `TracePacket.interned_data` dictionaries
+- **Profiler Fidelity**: Interned categories/source/callstack tables, recursive
+  typed metadata, merged sibling lanes, Chrome legacy payloads, and clock snapshots
 - **Direct Protobuf**: Uses protobuf directly for maximum control
 - **Target Flight Recorder**: Numeric, schema-driven ring records with no
   protobuf, heap allocation, syscall, lock, or event-path I/O
@@ -138,6 +140,7 @@ retrobus::resolve_interned_trace_inplace(trace);         // mutates in-place
 - [C++ Design Document](cpp-header-only-design.md)
 - [TypeScript Protobuf Bindings](ts/README.md)
 - [Protocol Buffer Definitions](proto/README.md)
+- [Perfetto Fidelity Guide](perfetto-fidelity-guide.md)
 - [Trace Analysis Tools](tools/README.md)
 
 ## Viewing Traces

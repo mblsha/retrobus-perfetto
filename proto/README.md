@@ -28,5 +28,17 @@ Generated files are placed in `ts/src/proto/`.
 
 ## Notes
 
-These protocol definitions are shared across all implementations to ensure compatibility.
-Do not modify these files unless you intend to update all language implementations.
+This is intentionally a compact subset, not a fork of the entire Perfetto
+schema. Included fields retain the exact official field numbers, wire types,
+oneofs, and enum values. The fidelity subset covers event-category and profiling
+interning, structured annotations, sibling track merging, TrackEvent
+callstacks/source locations, Chrome legacy payloads, and clock snapshots.
+
+`py/tests/test_official_compat.py` compares those fields with a pinned full
+official Perfetto descriptor and parses a representative trace through it. See
+[`perfetto-fidelity-guide.md`](../perfetto-fidelity-guide.md) for provenance,
+regeneration, and API/policy boundaries.
+
+These definitions are shared across generated Python, C++, and TypeScript
+bindings. Do not modify them without auditing readers, merge/index tooling, and
+all generated consumers.

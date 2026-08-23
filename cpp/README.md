@@ -9,6 +9,9 @@ This directory contains the C++ header-only implementation of retrobus-perfetto.
 - Zero-overhead abstractions with templates
 - Thread-safe trace building
 - Compatible protobuf format with Python implementation
+- Interned categories, source locations, native callstacks, and repeated annotation strings
+- Recursive typed dictionary/array annotations
+- Merged sibling lanes, Chrome legacy payloads, and clock snapshots
 
 ## Requirements
 
@@ -150,6 +153,8 @@ PerfettoTraceBuilder(std::string_view process_name,
 
 // Track management
 uint64_t add_thread(std::string_view name);
+uint64_t add_track(std::string_view name, /* optional parent/merge fields */);
+uint64_t add_merged_track_lane(std::string_view name, std::string_view merge_key);
 uint64_t add_counter_track(std::string_view name, std::string_view unit);
 
 // Events
@@ -158,6 +163,13 @@ void end_slice(uint64_t track, uint64_t timestamp_ns);
 TrackEventWrapper add_instant_event(uint64_t track, std::string_view name, uint64_t timestamp_ns);
 TrackEventWrapper add_flow(uint64_t track, std::string_view name, uint64_t timestamp_ns, 
                            uint64_t flow_id, bool terminating = false);
+TrackEventWrapper add_legacy_event(uint64_t track, std::string_view name,
+                                   uint64_t timestamp_ns, const LegacyEvent& legacy);
+
+// Clocks
+void set_default_timestamp_clock(uint32_t clock_id);
+void add_clock_snapshot(const std::vector<ClockReading>& readings,
+                        std::optional<perfetto::protos::BuiltinClock> primary);
 
 // Counters
 void update_counter(uint64_t track, double value, uint64_t timestamp_ns);
@@ -184,6 +196,11 @@ TrackEventWrapper& add_annotation(std::string_view key, std::string_view value);
 
 // Add pointer (automatically formatted)
 TrackEventWrapper& add_pointer(std::string_view key, uint64_t address);
+TrackEventWrapper& add_category(std::string_view category);
+TrackEventWrapper& set_source_location(const SourceLocation& location,
+                                       bool intern = true);
+TrackEventWrapper& set_inline_callstack(const std::vector<InlineFrame>& frames);
+TrackEventWrapper& set_callstack(const std::vector<StackFrame>& frames);
 
 // Structured annotations
 AnnotationBuilder annotation(std::string_view name);
@@ -203,7 +220,13 @@ AnnotationBuilder& floating(std::string_view key, double value);
 AnnotationBuilder& boolean(std::string_view key, bool value);
 AnnotationBuilder& string(std::string_view key, std::string_view value);
 AnnotationBuilder& pointer(std::string_view key, uint64_t address);
+AnnotationBuilder& unsigned_integer(std::string_view key, uint64_t value);
+AnnotationArrayBuilder array(std::string_view key);
 ```
+
+See the repository [Perfetto fidelity guide](../perfetto-fidelity-guide.md) for
+profiler conversion patterns and the distinction between schema fidelity,
+builder convenience, and caller-owned security/redaction policy.
 
 ## Performance Notes
 
