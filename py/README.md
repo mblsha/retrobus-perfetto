@@ -52,6 +52,15 @@ builder = PerfettoTraceBuilder("MyEmulator")
 trace_data = builder.serialize()
 ```
 
+### High-fidelity profiling data
+
+The builder can intern event categories and source/callstack tables, encode
+recursive dictionaries and arrays without stringification, create backing lanes
+that Perfetto merges into one logical track, preserve uncommon Chrome legacy
+payloads, and correlate producer clocks with builtin clocks. See the
+[Perfetto fidelity guide](../perfetto-fidelity-guide.md) for APIs, examples,
+incremental-state behavior, and the caller-owned path/address redaction policy.
+
 ### Compact target captures
 
 ```python
